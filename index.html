@@ -18,28 +18,40 @@
   html, body { margin:0; height:100%; background:#111; font-family:-apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif; color:var(--ink); overscroll-behavior:none; }
   #map { position:fixed; inset:0; background:#2b2f36; }
   /* barra superior de coordenadas */
-  #gps { position:fixed; top:0; left:0; right:0; z-index:1000; padding:calc(env(safe-area-inset-top) + 6px) 12px 8px;
-         background:rgba(11,47,124,.92); color:#fff; text-align:center; }
-  #gps .en { font-size:22px; font-weight:700; letter-spacing:.3px; font-variant-numeric:tabular-nums; }
-  #gps .en span { color:var(--gold); font-weight:600; font-size:15px; margin:0 4px 0 10px; }
-  #gps .ll { font-size:13px; opacity:.92; margin-top:2px; font-variant-numeric:tabular-nums; }
+  #gps { position:fixed; top:0; left:0; right:0; z-index:1000; padding:calc(env(safe-area-inset-top) + 30px) 12px 8px;
+         background:var(--navy); color:#fff; text-align:center; }
+  #gps .en { font-size:27px; font-weight:800; letter-spacing:.2px; line-height:1.15; font-variant-numeric:tabular-nums; }
+  #gps .en span { color:var(--gold); font-weight:700; font-size:16px; margin:0 5px 0 10px; }
+  #gps .ll { font-size:14px; font-weight:500; margin-top:3px; font-variant-numeric:tabular-nums; }
+  #gps .ll i { font-style:normal; color:#b9c6e4; margin-right:4px; }
   #gps .acc { font-weight:700; padding:1px 6px; border-radius:8px; margin-left:4px; }
   .ok { background:#1f8a3a; } .mid { background:#b77900; } .bad { background:#a3121e; }
   /* selector de mapa */
-  #capas { position:fixed; z-index:1000; right:10px; top:calc(env(safe-area-inset-top) + 86px); display:flex; flex-direction:column; gap:6px; }
+  #capas { position:fixed; z-index:1000; right:10px; top:calc(env(safe-area-inset-top) + 104px); display:flex; flex-direction:column; gap:6px; }
   #capas button { min-width:84px; padding:8px 10px; border-radius:10px; border:1px solid rgba(255,255,255,.6); background:rgba(0,0,0,.55); color:#fff; font-size:14px; font-weight:600; }
   #capas button.on { background:var(--gold); color:var(--navy); border-color:var(--gold); }
-  #fecha { position:fixed; z-index:999; left:10px; top:calc(env(safe-area-inset-top) + 86px); background:rgba(255,255,255,.88); color:#222; font-size:12px; padding:5px 8px; border-radius:8px; max-width:60%; }
+  #fecha { position:fixed; z-index:999; left:10px; top:calc(env(safe-area-inset-top) + 104px); background:rgba(255,255,255,.88); color:#222; font-size:12px; padding:5px 8px; border-radius:8px; max-width:60%; }
   /* barra inferior */
   #barra { position:fixed; z-index:1000; left:0; right:0; bottom:0; display:flex; gap:8px; justify-content:space-between; align-items:center;
            padding:10px 10px calc(env(safe-area-inset-bottom) + 10px); background:rgba(255,255,255,.95); border-top:1px solid var(--line); }
   #barra button { flex:1; height:52px; border-radius:12px; border:1px solid var(--line); background:#fff; font-size:13px; font-weight:600; color:var(--navy); }
   #barra button.prim { flex:1.4; background:var(--navy); color:#fff; border-color:var(--navy); font-size:15px; }
   #barra button b { display:block; font-size:18px; line-height:20px; }
+  #barra button.on { background:#1a73e8; color:#fff; border-color:#1a73e8; }
   /* cruz del centro del mapa */
-  #cruz { position:fixed; z-index:998; left:50%; top:50%; width:34px; height:34px; margin:-17px 0 0 -17px; pointer-events:none; display:none; }
-  #cruz:before, #cruz:after { content:""; position:absolute; background:var(--red); box-shadow:0 0 0 1px #fff; }
-  #cruz:before { left:16px; top:0; width:2px; height:34px; } #cruz:after { top:16px; left:0; height:2px; width:34px; }
+  #cruz { position:fixed; z-index:998; left:50%; top:50%; width:46px; height:46px; margin:-23px 0 0 -23px; pointer-events:none; }
+  /* rótulo de la cruz y caja de medición */
+  #mira { position:fixed; z-index:999; left:10px; right:10px; bottom:calc(env(safe-area-inset-bottom) + 84px); background:rgba(255,255,255,.93);
+          border-radius:10px; padding:6px 10px; font-size:13.5px; line-height:1.35; text-align:center; color:#222; font-variant-numeric:tabular-nums; }
+  #mira b { color:var(--red); }
+  #pMedir { position:fixed; z-index:1500; left:0; right:0; bottom:0; background:#fff; border-radius:14px 14px 0 0; display:none;
+            padding:10px 12px calc(env(safe-area-inset-bottom) + 10px); box-shadow:0 -4px 18px rgba(0,0,0,.35); font-variant-numeric:tabular-nums; }
+  #pMedir.abierto { display:block; }
+  #medTxt { font-size:15px; line-height:1.4; color:#222; } #medTxt b { color:var(--navy); font-size:19px; }
+  #pMedir .fila { display:flex; gap:6px; margin-top:8px; }
+  #pMedir .fila button { flex:1; height:46px; border-radius:10px; border:1px solid var(--line); background:#fff; color:var(--navy); font-size:13.5px; font-weight:600; }
+  #pMedir .fila button.prim { background:var(--navy); color:#fff; border-color:var(--navy); }
+  .rotm { color:#fff; font-weight:600; font-size:12px; }
   /* paneles */
   .panel { position:fixed; z-index:2000; left:0; right:0; bottom:0; max-height:86vh; overflow:auto; background:#fff; border-radius:16px 16px 0 0;
            padding:16px 16px calc(env(safe-area-inset-bottom) + 16px); box-shadow:0 -6px 24px rgba(0,0,0,.35); display:none; }
@@ -61,7 +73,7 @@
   .item .t { flex:1; font-size:14px; line-height:1.35; } .item .t b { font-size:16px; color:var(--navy); }
   .item button { height:40px; padding:0 12px; border-radius:10px; border:1px solid var(--line); background:#fff; color:var(--navy); font-weight:600; }
   .item button.borrar { color:var(--red); }
-  #aviso { position:fixed; z-index:3000; left:50%; transform:translateX(-50%); bottom:calc(env(safe-area-inset-bottom) + 86px); background:rgba(20,20,20,.9); color:#fff;
+  #aviso { position:fixed; z-index:3000; left:50%; transform:translateX(-50%); bottom:calc(env(safe-area-inset-bottom) + 132px); background:rgba(20,20,20,.9); color:#fff;
            padding:10px 14px; border-radius:12px; font-size:15px; display:none; max-width:90%; text-align:center; }
   /* rótulos delgados sobre el mapa */
   .rot { background:transparent; border:0; box-shadow:none; color:#fff; font-size:11px; font-weight:300; padding:0 0 0 4px;
@@ -77,7 +89,11 @@
 <div id="gps"><div class="en" id="gpsEN">Buscando GPS…</div><div class="ll" id="gpsLL">Permite la ubicación cuando el iPhone lo pida</div></div>
 <div id="capas"></div>
 <div id="fecha" style="display:none"></div>
-<div id="cruz"></div>
+<svg id="cruz" viewBox="0 0 46 46"><g stroke-linecap="round"><path d="M23 2v13M23 31v13M2 23h13M31 23h13" stroke="#fff" stroke-width="5"/>
+  <path d="M23 2v13M23 31v13M2 23h13M31 23h13" stroke="#C10617" stroke-width="2.4"/></g></svg>
+<div id="mira">—</div>
+<div id="pMedir"><div id="medTxt">Toca el mapa o usa los botones para poner puntos de medición.</div>
+  <div class="fila"><button id="bMedCruz" class="prim">＋ En la cruz</button><button id="bMedYo">＋ Mi posición</button><button id="bMedDeshacer">Deshacer</button><button id="bMedFin">Terminar</button></div></div>
 <div id="barra">
   <button id="bCentrar"><b>◎</b>Mi posición</button>
   <button id="bPunto" class="prim"><b>＋</b>Punto</button>
@@ -95,7 +111,7 @@
   <label for="fNota">Nota</label><textarea id="fNota" placeholder="Qué se ve, frente, estado, foto de Timestamp…"></textarea>
   <div class="fila"><button id="bCancelar">Cancelar</button><button id="bGuardar" class="prim">Guardar</button></div>
   <div class="fila" id="filaProm"><button id="bPromedio">Promediar 10 s y guardar</button></div>
-  <p class="nota">Promediar mejora la posición cuando la precisión es mala. Las fotos de evidencia se toman con Timestamp Camera; al regreso se enlazan a estos puntos por hora y ubicación.</p>
+  <p class="nota">Con «Mi posición» en azul el punto toma tu GPS exacto; si mueves el mapa, toma la cruz roja. Promediar mejora la posición cuando la precisión es mala. Las fotos de evidencia se toman con Timestamp Camera; al regreso se enlazan a estos puntos por hora y ubicación.</p>
 </div>
 
 <div class="panel" id="pLista"><h2>Puntos tomados</h2><div id="lista"></div>

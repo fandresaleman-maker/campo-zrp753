@@ -33,21 +33,26 @@ const puntoBorrar = id => tx('puntos', 'readwrite', s => s.delete(id));
 
 /* ---------------- mapa ---------------- */
 $('map').style.background = '#000';         // negro: el borde de las teselas de zoom bajo se funde con el fondo
-const map = L.map('map', { zoomControl: false, attributionControl: false, preferCanvas: true, maxZoom: 20, tap: false });
+const map = L.map('map', { zoomControl: false, attributionControl: false, preferCanvas: true, maxZoom: 20, tap: false,
+  touchZoom: 'center', scrollWheelZoom: 'center', doubleClickZoom: 'center' });   // el zoom no corre la cruz
 map.fitBounds([[7.636, -74.776], [7.679, -74.701]]);
-const capaZRP = L.layerGroup().addTo(map), capaUPM = L.layerGroup().addTo(map), capaMios = L.layerGroup().addTo(map);
+const capaZRP = L.layerGroup().addTo(map), capaUPM = L.layerGroup().addTo(map), capaMios = L.layerGroup().addTo(map), capaMed = L.layerGroup().addTo(map);
 let capaCeldas = null, ZRP = null, capaBase = null, CAPAS = [], PERSONAS = [];
 
+async function teselaBuscar(id, z, x, y) {   // la tesela pedida o, si falta, la de un nivel menor que la contiene
+  for (let d = 0; d <= 3; d++) { const b = await teselaGet(`${id}/${z - d}/${x >> d}/${y >> d}`); if (b) return { b, d }; }
+  return null;
+}
 const TeselaIDB = L.GridLayer.extend({
   createTile(c, done) {
-    const img = document.createElement('img'); img.alt = '';
-    teselaGet(`${this.options.id}/${c.z}/${c.x}/${c.y}`).then(b => {
-      if (!b) { img.style.visibility = 'hidden'; done(null, img); return; }
-      const u = URL.createObjectURL(b);
-      img.onload = () => { URL.revokeObjectURL(u); done(null, img); };
-      img.onerror = () => done(null, img); img.src = u;
-    }).catch(() => done(null, img));
-    return img;
+    const cv = document.createElement('canvas'); cv.width = cv.height = 256;
+    teselaBuscar(this.options.id, c.z, c.x, c.y).then(async r => {
+      if (!r) { cv.style.visibility = 'hidden'; done(null, cv); return; }
+      const im = await createImageBitmap(r.b), s = 256 >> r.d, k = (1 << r.d) - 1, g = cv.getContext('2d');
+      g.imageSmoothingQuality = 'high'; g.drawImage(im, (c.x & k) * s, (c.y & k) * s, s, s, 0, 0, 256, 256);
+      if (im.close) im.close(); done(null, cv);
+    }).catch(() => done(null, cv));
+    return cv;
   }
 });
 
@@ -82,16 +87,19 @@ async function cargarCapas() {
   PERSONAS = (await metaGet('personas')) || [];
   const cont = $('capas'); cont.innerHTML = '';
   CAPAS.forEach((c, i) => {
-    const b = document.createElement('button'); b.textContent = c.boton; b.onclick = () => verCapa(i); cont.appendChild(b);
+    const b = document.createElement('button'); b.textContent = c.boton || c.id; b.onclick = () => verCapa(i); cont.appendChild(b);
   });
-  const ir = document.createElement('button'); ir.textContent = 'Ir a ZRP'; ir.onclick = irZRP;
-  Object.assign(ir.style, { marginTop: '8px', background: 'rgba(11,47,124,.92)', borderColor: '#F9B21A', color: '#fff' });
-  cont.appendChild(ir);
+  [['Ir a ZRP', irZRP], ['Medir', medirAbrir]].forEach(([t, f], k) => {
+    const b = document.createElement('button'); b.textContent = t; b.onclick = f; b.className = 'herr';
+    Object.assign(b.style, { marginTop: k ? '0' : '8px', background: 'rgba(11,47,124,.92)', borderColor: '#F9B21A', color: '#fff' });
+    cont.appendChild(b);
+  });
   if (CAPAS.length) verCapa(0); else { $('fecha').style.display = 'block'; $('fecha').textContent = 'Sin mapas: carga el paquete en ⚙ Datos'; }
   pintarUPM(await metaGet('upm') || []);
   llenarUPM();
 }
 function irZRP() {                          // lleva el mapa a la ZRP desde donde esté
+  seguir(false);
   const b = ZRP ? L.geoJSON(ZRP).getBounds() : L.latLngBounds([[7.641, -74.770], [7.673, -74.707]]);
   map.setView(b.getCenter(), Math.max(13, map.getBoundsZoom(b, false, L.point(16, 230))));
 }
@@ -100,7 +108,7 @@ function verCapa(i) {
   const c = CAPAS[i];
   capaBase = new TeselaIDB({ id: c.id, minZoom: 10, maxZoom: 20, minNativeZoom: c.minzoom, maxNativeZoom: c.maxzoom, tileSize: 256 }).addTo(map);
   capaBase.bringToBack();
-  [...$('capas').children].forEach((b, k) => b.classList.toggle('on', k === i));
+  [...$('capas').children].forEach((b, k) => b.classList.toggle('on', k === i && !b.classList.contains('herr')));
   $('fecha').style.display = 'block'; $('fecha').textContent = c.nombre;
 }
 function pintarUPM(upm) {
@@ -122,19 +130,36 @@ function llenarUPM() {
 }
 
 /* ---------------- GPS ---------------- */
-let POS = null, marcaYo = null, circYo = null, centrado = false, watchId = null;
+let POS = null, marcaYo = null, circYo = null, centrado = false, watchId = null, SEGUIR = false;
+function seguir(on) { SEGUIR = on; $('bCentrar').classList.toggle('on', on); actualizarMira(); }
+const ROSA = ['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'];
+function rumbo(a, b) {                       // grados desde el norte, de a hacia b
+  const f1 = a.lat * Math.PI / 180, f2 = b.lat * Math.PI / 180, dl = (b.lng - a.lng) * Math.PI / 180;
+  return (Math.atan2(Math.sin(dl) * Math.cos(f2), Math.cos(f1) * Math.sin(f2) - Math.sin(f1) * Math.cos(f2) * Math.cos(dl)) * 180 / Math.PI + 360) % 360;
+}
+const rumboTxt = g => `${Math.round(g) % 360}° ${ROSA[Math.round(g / 45) % 8]}`;
+const distTxt = m => m < 1000 ? `${Math.round(m)} m` : `${dec(m / 1000, 2)} km`;
+function actualizarMira() {
+  const m = $('mira');
+  if (SEGUIR && POS) { m.innerHTML = '<b>✛</b> La cruz está en tu posición: el punto toma tu GPS exacto'; return; }
+  const c = map.getCenter(), [E, N] = aCTM(c.lat, c.lng);
+  m.innerHTML = `<b>✛ Cruz</b> E ${miles(E)} · N ${miles(N)}` +
+    (POS ? `<br>a ${distTxt(map.distance([POS.lat, POS.lon], c))} de ti · rumbo ${rumboTxt(rumbo(L.latLng(POS.lat, POS.lon), c))}` : '');
+}
 function enPos(p) {
   const { latitude: lat, longitude: lon, accuracy: acc } = p.coords;
   POS = { lat, lon, acc, t: Date.now() };
   const [E, N] = aCTM(lat, lon);
   $('gpsEN').innerHTML = `<span>E</span>${miles(E)}<span>N</span>${miles(N)}`;
   const cls = acc <= 5 ? 'ok' : acc <= 15 ? 'mid' : 'bad';
-  $('gpsLL').innerHTML = `${dec(lat, 6)}, ${dec(lon, 6)} <span class="acc ${cls}">±${Math.round(acc)} m</span>`;
+  $('gpsLL').innerHTML = `<i>Lat, Lon</i>${dec(lat, 6)}, ${dec(lon, 6)} <span class="acc ${cls}">±${Math.round(acc)} m</span>`;
   if (!marcaYo) {
     marcaYo = L.marker([lat, lon], { icon: L.divIcon({ className: '', html: '<div class="yo"></div>', iconSize: [18, 18], iconAnchor: [9, 9] }), interactive: false, zIndexOffset: 1000 }).addTo(map);
     circYo = L.circle([lat, lon], { radius: acc, color: '#1a73e8', weight: 1, fillOpacity: .12, interactive: false }).addTo(map);
   } else { marcaYo.setLatLng([lat, lon]); circYo.setLatLng([lat, lon]).setRadius(acc); }
-  if (!centrado) { centrado = true; map.setView([lat, lon], Math.max(map.getZoom(), 16)); }
+  if (!centrado) { centrado = true; map.setView([lat, lon], Math.max(map.getZoom(), 16)); seguir(true); }
+  else if (SEGUIR) map.panTo([lat, lon], { animate: false });
+  actualizarMira(); textoMed();
   if ($('pPunto').classList.contains('abierto')) mostrarPosicionPunto();
 }
 function enError(e) {
@@ -161,12 +186,17 @@ function mostrarPosicionPunto() {
   const p = posicionActual(); const c = $('pPosicion');
   if (!p) { c.innerHTML = 'Sin posición GPS. Espera la señal o usa «En la cruz del mapa».'; return; }
   const [E, N] = aCTM(p.lat, p.lon);
-  c.innerHTML = `<b>E</b> ${miles(E)} &nbsp; <b>N</b> ${miles(N)}<br>${dec(p.lat, 6)}, ${dec(p.lon, 6)}` + (p.acc != null ? ` · ±${Math.round(p.acc)} m` : ' · ubicado en el mapa');
+  const lejos = p.acc == null && POS ? ` · a ${distTxt(map.distance([POS.lat, POS.lon], [p.lat, p.lon]))} de ti` : '';
+  c.innerHTML = `<b>E</b> ${miles(E)} &nbsp; <b>N</b> ${miles(N)}<br>${dec(p.lat, 6)}, ${dec(p.lon, 6)}` + (p.acc != null ? ` · ±${Math.round(p.acc)} m (GPS)` : ' · en la cruz' + lejos);
 }
 async function abrirNuevoPunto() {
   const n = (await puntosTodos()).length + 1;
   $('fNombre').value = 'P' + String(n).padStart(2, '0'); $('fNota').value = '';
-  abrir('pPunto'); mostrarPosicionPunto();
+  abrir('pPunto'); ponerOrigen(SEGUIR && POS ? 'gps' : 'mapa');
+}
+function ponerOrigen(o) {
+  ORIGEN = o; [...$('segOrigen').children].forEach(b => b.classList.toggle('on', b.dataset.o === o));
+  $('filaProm').style.display = o === 'mapa' ? 'none' : 'flex'; mostrarPosicionPunto();
 }
 async function guardarPunto(p) {
   if (!p) { avisar('No hay posición para guardar'); return; }
@@ -202,7 +232,7 @@ async function abrirLista() {
   pts.forEach(p => {
     const d = document.createElement('div'); d.className = 'item';
     d.innerHTML = `<div class="t"><b>${esc(p.nombre)}</b> · ${esc(p.upm)}<br>E ${miles(p.este)} · N ${miles(p.norte)}${p.precision != null ? ' · ±' + Math.round(p.precision) + ' m' : ''}<br><span class="nota">${esc(p.local)}${p.nota ? ' · ' + esc(p.nota) : ''}</span></div>`;
-    const v = document.createElement('button'); v.textContent = 'Ver'; v.onclick = () => { abrir(null); map.setView([p.lat, p.lon], 18); };
+    const v = document.createElement('button'); v.textContent = 'Ver'; v.onclick = () => { abrir(null); seguir(false); map.setView([p.lat, p.lon], 18); };
     const x = document.createElement('button'); x.textContent = 'Borrar'; x.className = 'borrar';
     x.onclick = async () => { if (confirm(`¿Borrar ${p.nombre}? No se puede deshacer.`)) { await puntoBorrar(p.id); await pintarMios(); abrirLista(); } };
     d.append(v, x); l.appendChild(d);
@@ -210,6 +240,44 @@ async function abrirLista() {
   abrir('pLista');
 }
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+/* ---------------- medir ---------------- */
+let MIDIENDO = false, VERT = [], guiaMed = null;
+function medirAbrir() { MIDIENDO = true; VERT = []; abrir(null); $('pMedir').classList.add('abierto'); $('mira').style.display = 'none'; pintarMed(); }
+function medirFin() {
+  MIDIENDO = false; VERT = []; capaMed.clearLayers(); if (guiaMed) { map.removeLayer(guiaMed); guiaMed = null; }
+  $('pMedir').classList.remove('abierto'); $('mira').style.display = ''; actualizarMira();
+}
+function medirAgregar(ll) { VERT.push(L.latLng(ll)); pintarMed(); }
+function pintarMed() {
+  capaMed.clearLayers(); let tot = 0;
+  if (VERT.length > 1) {
+    L.polyline(VERT, { color: '#000', weight: 6, opacity: .4, interactive: false }).addTo(capaMed);
+    L.polyline(VERT, { color: '#F9B21A', weight: 3, interactive: false }).addTo(capaMed);
+  }
+  VERT.forEach((v, i) => {
+    if (i) tot += map.distance(VERT[i - 1], v);
+    L.circleMarker(v, { radius: 5, color: '#111', weight: 1.5, fillColor: '#F9B21A', fillOpacity: 1, interactive: false })
+      .bindTooltip(i ? distTxt(tot) : 'Inicio', { permanent: true, direction: 'right', className: 'rot rotm', offset: [6, 0] }).addTo(capaMed);
+  });
+  textoMed();
+}
+function textoMed() {                       // totales, último tramo y línea guía hasta la cruz
+  if (!MIDIENDO) return;
+  const c = map.getCenter(); let tot = 0;
+  for (let i = 1; i < VERT.length; i++) tot += map.distance(VERT[i - 1], VERT[i]);
+  let h = `<b>${distTxt(tot)}</b> en total · ${Math.max(VERT.length - 1, 0)} tramo(s)`;
+  if (VERT.length) {
+    const u = VERT[VERT.length - 1];
+    if (VERT.length > 1) { const p = VERT[VERT.length - 2]; h += `<br>Último tramo: ${distTxt(map.distance(p, u))} · rumbo ${rumboTxt(rumbo(p, u))}`; }
+    h += `<br>Del último punto a la cruz: ${distTxt(map.distance(u, c))} · rumbo ${rumboTxt(rumbo(u, c))}`;
+    if (guiaMed) guiaMed.setLatLngs([u, c]); else guiaMed = L.polyline([u, c], { color: '#fff', weight: 2, dashArray: '6 6', interactive: false }).addTo(map);
+  } else {
+    h += '<br>Toca el mapa, o pon el primer punto en la cruz o en tu posición.';
+    if (guiaMed) { map.removeLayer(guiaMed); guiaMed = null; }
+  }
+  $('medTxt').innerHTML = h;
+}
 
 /* ---------------- exportar ---------------- */
 async function datosExport() {
@@ -268,22 +336,30 @@ async function importarZip(buf) {
     await tx('teselas', 'readwrite', s => { lote.forEach(([k, b]) => s.put(b, k)); });
     hechas += lote.length; pr.textContent = `Cargando mapas… ${hechas} de ${nombres.length} teselas`;
   }
-  await metaSet('capas', meta.capas); await metaSet('upm', meta.upm); await metaSet('personas', meta.personas);
-  pr.textContent = `Listo: ${nombres.length} teselas y ${meta.upm.length} puntos de UPM.`;
+  if (meta.capas) {
+    const m = new Map(((await metaGet('capas')) || []).map(c => [c.id, c]));
+    meta.capas.forEach(c => m.set(c.id, { ...(m.get(c.id) || {}), ...c })); await metaSet('capas', [...m.values()]);
+  }
+  if (meta.upm) await metaSet('upm', meta.upm); if (meta.personas) await metaSet('personas', meta.personas);
+  pr.textContent = `Listo: ${nombres.length} teselas` + (meta.upm ? ` y ${meta.upm.length} puntos de UPM.` : '.');
   await cargarCapas(); await estadoDatos(); avisar('Paquete cargado');
 }
 window.app = { importarZipURL: async u => importarZip(await (await fetch(u)).arrayBuffer()), simular: (lat, lon, acc = 6) => enPos({ coords: { latitude: lat, longitude: lon, accuracy: acc } }) };
 
 /* ---------------- eventos ---------------- */
-$('bCentrar').onclick = () => { if (POS) map.setView([POS.lat, POS.lon], Math.max(map.getZoom(), 17)); else { iniciarGPS(); avisar('Buscando GPS…'); } };
+$('bCentrar').onclick = () => { if (POS) { map.setView([POS.lat, POS.lon], Math.max(map.getZoom(), 17)); seguir(true); } else { iniciarGPS(); avisar('Buscando GPS…'); } };
+map.on('dragstart', () => { if (SEGUIR) seguir(false); });
+map.on('move', () => { actualizarMira(); textoMed(); });
+map.on('click', e => { if (MIDIENDO) medirAgregar(e.latlng); });
+$('bMedCruz').onclick = () => medirAgregar(map.getCenter());
+$('bMedYo').onclick = () => { if (POS) medirAgregar([POS.lat, POS.lon]); else avisar('Sin GPS todavía'); };
+$('bMedDeshacer').onclick = () => { VERT.pop(); pintarMed(); };
+$('bMedFin').onclick = medirFin;
 $('bPunto').onclick = abrirNuevoPunto;
 $('bCancelar').onclick = () => abrir(null);
 $('bGuardar').onclick = () => guardarPunto(posicionActual());
 $('bPromedio').onclick = promediar;
-$('segOrigen').onclick = e => { const o = e.target.dataset.o; if (!o) return; ORIGEN = o;
-  [...$('segOrigen').children].forEach(b => b.classList.toggle('on', b.dataset.o === o));
-  $('cruz').style.display = o === 'mapa' ? 'block' : 'none'; $('filaProm').style.display = o === 'mapa' ? 'none' : 'flex';
-  if (o === 'mapa') { abrir(null); avisar('Mueve el mapa hasta poner la cruz sobre el sitio y toca «＋ Punto»', 4200); } else mostrarPosicionPunto(); };
+$('segOrigen').onclick = e => { const o = e.target.dataset.o; if (o) ponerOrigen(o); };
 $('bLista').onclick = abrirLista; $('bCerrarLista').onclick = () => abrir(null);
 $('bExportar').onclick = () => abrir('pExportar'); $('bCerrarExp').onclick = () => abrir(null);
 $('bZip').onclick = exportarZip; $('bCsv').onclick = exportarCsv; $('bCopiar').onclick = copiarTexto;
@@ -298,7 +374,7 @@ $('bBorrarPuntos').onclick = async () => { if (!confirm('¿Borrar TODOS tus punt
 (async () => {
   await abrirDB();
   try { if (navigator.storage && navigator.storage.persist) await navigator.storage.persist(); } catch (e) {}
-  await cargarZRP(); await cargarCapas(); await pintarMios(); iniciarGPS();
+  await cargarZRP(); await cargarCapas(); await pintarMios(); actualizarMira(); iniciarGPS();
   if ('serviceWorker' in navigator) {        // al publicar una versión nueva, recarga una vez para estrenarla
     const habia = !!navigator.serviceWorker.controller; let recargada = false;
     navigator.serviceWorker.addEventListener('controllerchange', () => { if (habia && !recargada) { recargada = true; location.reload(); } });
