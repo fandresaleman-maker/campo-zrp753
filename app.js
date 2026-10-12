@@ -134,11 +134,13 @@ function pintarUPM(upm) {
     let m;
     if (u.tipo === 'ga') {
       m = L.marker([u.lat, u.lon], { icon: L.divIcon({ className: '', iconSize: [18, 16], iconAnchor: [9, 11],
-        html: `<svg width="18" height="16"><polygon points="9,1 17,15 1,15" fill="#fff" stroke="#111" stroke-width="1.2"/><polygon points="9,6 13,13 5,13" fill="${u.color}"/></svg>` }), interactive: false });
+        html: `<svg width="18" height="16"><polygon points="9,1 17,15 1,15" fill="#fff" stroke="#111" stroke-width="1.2"/><polygon points="9,6 13,13 5,13" fill="${u.color}"/></svg>` }), keyboard: false });
+      m.on('click', e => tocar(e, () => fichaUPM(u), true));
     } else {
-      m = L.circleMarker([u.lat, u.lon], { radius: 6, color: '#111', weight: 1.5, fillColor: u.color, fillOpacity: 1, interactive: false });
+      m = L.circleMarker([u.lat, u.lon], { radius: 6, color: '#111', weight: 1.5, fillColor: u.color, fillOpacity: 1 });
+      m.on('click', e => tocar(e, () => fichaUPM(u), false));
     }
-    m.bindTooltip(u.rotulo, { permanent: true, direction: 'right', className: 'rot', offset: [6, 0] }); m.addTo(capaUPM);
+    m.addTo(capaUPM); etiqueta([u.lat, u.lon], u.rotulo, 'der fina', () => fichaUPM(u)).addTo(capaUPM);
   });
 }
 function llenarUPM() {                      // listas de mineros: los del paquete más los que se sumen en campo
@@ -258,8 +260,11 @@ function promediar() {
 }
 async function pintarMios() {
   const pts = (await puntosTodos()).filter(pasaFiltro); capaMios.clearLayers(); contar();
-  pts.forEach(p => L.circleMarker([p.lat, p.lon], { radius: 6, color: '#fff', weight: 2, fillColor: '#C10617', fillOpacity: 1, interactive: false })
-    .bindTooltip(rotulo(p), { permanent: true, direction: 'right', className: 'rot rotp', offset: [6, 0] }).addTo(capaMios));
+  pts.forEach(p => {
+    L.circleMarker([p.lat, p.lon], { radius: 6, color: '#fff', weight: 2, fillColor: '#C10617', fillOpacity: 1 })
+      .on('click', e => tocar(e, () => fichaPunto(p), false)).addTo(capaMios);
+    etiqueta([p.lat, p.lon], rotulo(p), 'der amar', () => fichaPunto(p)).addTo(capaMios);
+  });
 }
 async function abrirLista() {
   const pts = (await puntosTodos()).filter(pasaFiltro).sort((a, b) => a.fecha < b.fecha ? 1 : -1); const l = $('lista'); l.innerHTML = '';
@@ -298,8 +303,34 @@ let MIDIENDO = false, CERRADA = false, VERT = [], guiaMed = null;
 const haTxt = m2 => `${dec(m2 / 10000, 2)} ha`;
 const centro = vs => L.latLng(vs.reduce((a, v) => a + v.lat, 0) / vs.length, vs.reduce((a, v) => a + v.lng, 0) / vs.length);
 const mitad = (a, b) => L.latLng((a.lat + b.lat) / 2, (a.lng + b.lng) / 2);
-function etiqueta(ll, txt, cls = '') {
-  return L.marker(ll, { icon: L.divIcon({ className: 'etq ' + cls, html: `<span>${esc(txt)}</span>`, iconSize: [0, 0] }), interactive: false, keyboard: false });
+function etiqueta(ll, txt, cls = '', fn) {    // rótulo sobre el mapa; con fn, al tocarlo abre la ficha
+  const m = L.marker(ll, { icon: L.divIcon({ className: 'etq ' + cls + (fn ? ' clic' : ''), html: `<span>${esc(txt)}</span>`, iconSize: [0, 0] }), interactive: !!fn, keyboard: false });
+  if (fn) m.on('click', e => tocar(e, fn, true));
+  return m;
+}
+function tocar(e, fn, esMarcador) {          // al tocar abre la ficha; si se está midiendo, el toque pone un punto de medición
+  if (MIDIENDO) { if (esMarcador) medirAgregar(map.mouseEventToLatLng(e.originalEvent)); return; }
+  fn();
+}
+function ficha(ll, html, editar) {           // recuadro con los datos, sin ir al listado
+  seguir(false);
+  const d = document.createElement('div'); d.className = 'ficha'; d.innerHTML = html;
+  if (editar) { const b = document.createElement('button'); b.textContent = 'Editar'; b.onclick = () => { map.closePopup(); editar(); }; d.appendChild(b); }
+  L.popup({ maxWidth: 270, autoPanPaddingTopLeft: L.point(10, 170), autoPanPaddingBottomRight: L.point(10, 150) }).setLatLng(ll).setContent(d).openOn(map);
+}
+const pie = r => `<br>${esc(r.local)}` + (r.nota ? `<br><i>${esc(r.nota)}</i>` : '') + (r.editado ? `<br><span class="nota">Editado ${esc(r.editado)}</span>` : '');
+function fichaPunto(p) {
+  ficha([p.lat, p.lon], `<b>${esc(rotulo(p))}</b><br>${esc(p.upm)}<br>E ${miles(p.este)} · N ${miles(p.norte)}<br>${dec(p.lat, 6)}, ${dec(p.lon, 6)}` +
+    (p.precision != null ? ` · ±${Math.round(p.precision)} m` : '') + ` · ${esc(p.origen)}` + pie(p), () => abrirEditar('puntos', p, true));
+}
+function fichaTrazo(t, ll) {
+  const med = t.tipo === 'area' ? `${haTxt(t.area_m2)} · perímetro ${distTxt(t.longitud_m)} · ${t.vertices.length} vértices` : `${distTxt(t.longitud_m)} · ${t.tramos_m.length} tramo(s)`;
+  ficha(ll, `<b>${esc(rotulo(t))}</b><br>${t.tipo === 'area' ? 'Área' : 'Línea'} · ${esc(t.que)}<br>${esc(t.upm)}<br>${med}<br>Tramos: ${t.tramos_m.map(distTxt).join(' · ')}` + pie(t),
+    () => abrirEditar('trazos', t, true));
+}
+function fichaUPM(u) {
+  const [E, N] = aCTM(u.lat, u.lon);
+  ficha([u.lat, u.lon], `<b>${esc(u.persona)}</b><br>${esc(u.rotulo)}<br>${u.tipo === 'ga' ? 'Caracterización de la Gobernación de Antioquia' : 'Identificación ANM'}<br>E ${miles(E)} · N ${miles(N)}<br>${dec(u.lat, 6)}, ${dec(u.lon, 6)}`);
 }
 function medidas(vs, cerrada) {              // tramos, total y área, planos en CTM12 (Origen Nacional)
   const tramos = [];
@@ -386,8 +417,8 @@ function ponerValor(sel, v) {                // selecciona v aunque no esté en 
   if (v && ![...sel.options].some(o => o.text === v)) { const o = document.createElement('option'); o.textContent = v; sel.insertBefore(o, sel.lastChild); }
   sel.value = v || SIN;
 }
-function abrirEditar(almacen, r) {
-  EDIT = { almacen, r };
+function abrirEditar(almacen, r, desdeMapa = false) {
+  EDIT = { almacen, r, desdeMapa };
   $('eCodigo').textContent = r.codigo || r.nombre || '';
   $('eResumen').innerHTML = almacen === 'puntos' ? `<b>Punto</b> · E ${miles(r.este)} · N ${miles(r.norte)}${r.precision != null ? ' · ±' + Math.round(r.precision) + ' m' : ''}<br>${esc(r.local)}`
     : (r.tipo === 'area' ? `<b>Área</b> · ${haTxt(r.area_m2)} · perímetro ${distTxt(r.longitud_m)}` : `<b>Línea</b> · ${distTxt(r.longitud_m)} · ${r.tramos_m.length} tramo(s)`) + `<br>${esc(r.local)}`;
@@ -402,7 +433,7 @@ async function guardarEdicion() {
   const nuevo = { ...r, nombre: $('eCorto').value.trim() || (r.codigo ? '' : r.nombre), upm: $('eUpm').value, nota: $('eNota').value.trim(), editado: fechaLocal(new Date()) };
   if (almacen === 'trazos') nuevo.que = $('eQue').value;
   if (almacen === 'puntos') { await puntoGuardar(nuevo); await pintarMios(); } else { await trazoGuardar(nuevo); await pintarTrazos(); }
-  avisar(`Editado ${rotulo(nuevo)}`); abrirLista();
+  avisar(`Editado ${rotulo(nuevo)}`); if (EDIT.desdeMapa) abrir(null); else abrirLista();
 }
 async function pintarTrazos() {              // líneas en celeste y áreas en blanco con sombreado suave
   const ts = (await trazosTodos()).filter(pasaFiltro); capaLineas.clearLayers(); capaAreas.clearLayers();
@@ -410,11 +441,11 @@ async function pintarTrazos() {              // líneas en celeste y áreas en b
     const vs = t.vertices.map(([a, b]) => L.latLng(a, b));
     if (t.tipo === 'area') {
       L.polygon(vs, { color: '#fff', weight: 2, fillColor: '#fff', fillOpacity: .14, interactive: false }).addTo(capaAreas);
-      etiqueta(centro(vs), `${rotulo(t)} · ${haTxt(t.area_m2)}`, 'grande').addTo(capaAreas);
+      etiqueta(centro(vs), `${rotulo(t)} · ${haTxt(t.area_m2)}`, 'grande', () => fichaTrazo(t, centro(vs))).addTo(capaAreas);
     } else {
       L.polyline(vs, { color: '#000', weight: 5, opacity: .35, interactive: false }).addTo(capaLineas);
-      L.polyline(vs, { color: '#4DD0E1', weight: 3, interactive: false }).addTo(capaLineas);
-      etiqueta(vs[vs.length - 1], `${rotulo(t)} · ${distTxt(t.longitud_m)}`, 'der').addTo(capaLineas);
+      L.polyline(vs, { color: '#4DD0E1', weight: 4 }).on('click', e => tocar(e, () => fichaTrazo(t, e.latlng), false)).addTo(capaLineas);
+      etiqueta(vs[vs.length - 1], `${rotulo(t)} · ${distTxt(t.longitud_m)}`, 'der', () => fichaTrazo(t, vs[vs.length - 1])).addTo(capaLineas);
     }
   });
   contar();
@@ -523,7 +554,7 @@ $('bMedir').onclick = medirAbrir;
 $('filtros').onclick = e => { const v = e.target.dataset.v; if (v) alternarVer(v); };
 $('fMinero').onchange = async e => { FILTRO = e.target.value; await pintarMios(); await pintarTrazos(); };
 $('fUpm').onchange = e => otroMinero(e.target); $('tUpm').onchange = e => otroMinero(e.target); $('eUpm').onchange = e => otroMinero(e.target);
-$('bECancelar').onclick = () => abrirLista(); $('bEGuardar').onclick = guardarEdicion;
+$('bECancelar').onclick = () => { if (EDIT && EDIT.desdeMapa) abrir(null); else abrirLista(); }; $('bEGuardar').onclick = guardarEdicion;
 $('bPunto').onclick = abrirNuevoPunto;
 $('bCancelar').onclick = () => abrir(null);
 $('bGuardar').onclick = () => guardarPunto(posicionActual());
