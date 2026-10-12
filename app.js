@@ -3,6 +3,7 @@
 'use strict';
 const CTM12 = '+proj=tmerc +lat_0=4 +lon_0=-73 +k=0.9992 +x_0=5000000 +y_0=2000000 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs';
 const aCTM = (lat, lon) => proj4('EPSG:4326', CTM12, [lon, lat]);           // -> [Este, Norte]
+const distCTM = (a, b) => { const p = aCTM(a.lat, a.lng), q = aCTM(b.lat, b.lng); return Math.hypot(q[0] - p[0], q[1] - p[1]); };   // metros en el plano CTM12
 const miles = v => Math.round(v).toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
 const dec = (v, n) => v.toFixed(n).replace('.', ',');
 const $ = id => document.getElementById(id);
@@ -11,9 +12,13 @@ const $ = id => document.getElementById(id);
 let DB;
 function abrirDB() {
   return new Promise((res, rej) => {
-    const r = indexedDB.open('campo-zrp753', 1);
-    r.onupgradeneeded = () => { const d = r.result; d.createObjectStore('teselas'); d.createObjectStore('meta'); d.createObjectStore('puntos', { keyPath: 'id' }); };
-    r.onsuccess = () => { DB = r.result; res(DB); };
+    const r = indexedDB.open('campo-zrp753', 2);
+    r.onupgradeneeded = () => {               // v2 agrega «trazos» (líneas y áreas) sin tocar lo que ya había
+      const d = r.result;
+      [['teselas'], ['meta'], ['puntos', { keyPath: 'id' }], ['trazos', { keyPath: 'id' }]].forEach(([n, o]) => { if (!d.objectStoreNames.contains(n)) d.createObjectStore(n, o); });
+    };
+    r.onsuccess = () => { DB = r.result; DB.onversionchange = () => { DB.close(); location.reload(); }; res(DB); };   // cede el paso a una versión nueva
+    r.onblocked = () => { $('gpsLL').textContent = 'Actualizando: cierra las otras ventanas de la app'; };
     r.onerror = () => rej(r.error);
   });
 }
@@ -30,13 +35,24 @@ const teselaGet = k => tx('teselas', 'readonly', s => s.get(k));
 const puntosTodos = () => tx('puntos', 'readonly', s => s.getAll());
 const puntoGuardar = p => tx('puntos', 'readwrite', s => s.put(p));
 const puntoBorrar = id => tx('puntos', 'readwrite', s => s.delete(id));
+const trazosTodos = () => tx('trazos', 'readonly', s => s.getAll());
+const trazoGuardar = t => tx('trazos', 'readwrite', s => s.put(t));
+const trazoBorrar = id => tx('trazos', 'readwrite', s => s.delete(id));
 
 /* ---------------- mapa ---------------- */
 $('map').style.background = '#000';         // negro: el borde de las teselas de zoom bajo se funde con el fondo
 const map = L.map('map', { zoomControl: false, attributionControl: false, preferCanvas: true, maxZoom: 20, tap: false,
   touchZoom: 'center', scrollWheelZoom: 'center', doubleClickZoom: 'center' });   // el zoom no corre la cruz
 map.fitBounds([[7.636, -74.776], [7.679, -74.701]]);
-const capaZRP = L.layerGroup().addTo(map), capaUPM = L.layerGroup().addTo(map), capaMios = L.layerGroup().addTo(map), capaMed = L.layerGroup().addTo(map);
+const capaZRP = L.layerGroup().addTo(map), capaAreas = L.layerGroup().addTo(map), capaLineas = L.layerGroup().addTo(map), capaUPM = L.layerGroup().addTo(map),
+      capaMios = L.layerGroup().addTo(map), capaMed = L.layerGroup().addTo(map);
+let VER = { puntos: true, lineas: true, areas: true };   // qué se muestra de lo guardado
+function aplicarVer() {
+  [[capaMios, 'puntos'], [capaLineas, 'lineas'], [capaAreas, 'areas']].forEach(([c, k]) => { if (VER[k]) c.addTo(map); else map.removeLayer(c); });
+  [...$('segVer').children].forEach(b => b.classList.toggle('on', !!VER[b.dataset.v]));
+  const b = $('bVerAreas'); if (b) b.textContent = VER.areas ? 'Áreas: sí' : 'Áreas: no';
+}
+function alternarVer(k) { VER[k] = !VER[k]; aplicarVer(); metaSet('ver', VER).catch(() => {}); }
 let capaCeldas = null, ZRP = null, capaBase = null, CAPAS = [], PERSONAS = [];
 
 async function teselaBuscar(id, z, x, y) {   // la tesela pedida o, si falta, la de un nivel menor que la contiene
@@ -89,14 +105,14 @@ async function cargarCapas() {
   CAPAS.forEach((c, i) => {
     const b = document.createElement('button'); b.textContent = c.boton || c.id; b.onclick = () => verCapa(i); cont.appendChild(b);
   });
-  [['Ir a ZRP', irZRP], ['Medir', medirAbrir]].forEach(([t, f], k) => {
-    const b = document.createElement('button'); b.textContent = t; b.onclick = f; b.className = 'herr';
+  [['Ir a ZRP', irZRP], ['Medir', medirAbrir], ['Áreas: sí', () => alternarVer('areas'), 'bVerAreas']].forEach(([t, f, id], k) => {
+    const b = document.createElement('button'); b.textContent = t; b.onclick = f; b.className = 'herr'; if (id) b.id = id;
     Object.assign(b.style, { marginTop: k ? '0' : '8px', background: 'rgba(11,47,124,.92)', borderColor: '#F9B21A', color: '#fff' });
     cont.appendChild(b);
   });
   if (CAPAS.length) verCapa(0); else { $('fecha').style.display = 'block'; $('fecha').textContent = 'Sin mapas: carga el paquete en ⚙ Datos'; }
   pintarUPM(await metaGet('upm') || []);
-  llenarUPM();
+  llenarUPM(); aplicarVer();
 }
 function irZRP() {                          // lleva el mapa a la ZRP desde donde esté
   seguir(false);
@@ -125,8 +141,10 @@ function pintarUPM(upm) {
   });
 }
 function llenarUPM() {
-  const s = $('fUpm'); s.innerHTML = '';
-  ['— Sin asignar —', ...PERSONAS, 'Otro minero o tercero'].forEach(n => { const o = document.createElement('option'); o.textContent = n; s.appendChild(o); });
+  ['fUpm', 'tUpm'].forEach(id => {
+    const s = $(id); s.innerHTML = '';
+    ['— Sin asignar —', ...PERSONAS, 'Otro minero o tercero'].forEach(n => { const o = document.createElement('option'); o.textContent = n; s.appendChild(o); });
+  });
 }
 
 /* ---------------- GPS ---------------- */
@@ -144,7 +162,7 @@ function actualizarMira() {
   if (SEGUIR && POS) { m.innerHTML = '<b>✛</b> La cruz está en tu posición: el punto toma tu GPS exacto'; return; }
   const c = map.getCenter(), [E, N] = aCTM(c.lat, c.lng);
   m.innerHTML = `<b>✛ Cruz</b> E ${miles(E)} · N ${miles(N)}` +
-    (POS ? `<br>a ${distTxt(map.distance([POS.lat, POS.lon], c))} de ti · rumbo ${rumboTxt(rumbo(L.latLng(POS.lat, POS.lon), c))}` : '');
+    (POS ? `<br>a ${distTxt(distCTM(L.latLng(POS.lat, POS.lon), c))} de ti · rumbo ${rumboTxt(rumbo(L.latLng(POS.lat, POS.lon), c))}` : '');
 }
 function enPos(p) {
   const { latitude: lat, longitude: lon, accuracy: acc } = p.coords;
@@ -186,7 +204,7 @@ function mostrarPosicionPunto() {
   const p = posicionActual(); const c = $('pPosicion');
   if (!p) { c.innerHTML = 'Sin posición GPS. Espera la señal o usa «En la cruz del mapa».'; return; }
   const [E, N] = aCTM(p.lat, p.lon);
-  const lejos = p.acc == null && POS ? ` · a ${distTxt(map.distance([POS.lat, POS.lon], [p.lat, p.lon]))} de ti` : '';
+  const lejos = p.acc == null && POS ? ` · a ${distTxt(distCTM(L.latLng(POS.lat, POS.lon), L.latLng(p.lat, p.lon)))} de ti` : '';
   c.innerHTML = `<b>E</b> ${miles(E)} &nbsp; <b>N</b> ${miles(N)}<br>${dec(p.lat, 6)}, ${dec(p.lon, 6)}` + (p.acc != null ? ` · ±${Math.round(p.acc)} m (GPS)` : ' · en la cruz' + lejos);
 }
 async function abrirNuevoPunto() {
@@ -222,13 +240,25 @@ function promediar() {
     } }, 1000);
 }
 async function pintarMios() {
-  const pts = await puntosTodos(); capaMios.clearLayers(); $('nPuntos').textContent = pts.length;
+  const pts = await puntosTodos(); capaMios.clearLayers(); contar();
   pts.forEach(p => L.circleMarker([p.lat, p.lon], { radius: 6, color: '#fff', weight: 2, fillColor: '#C10617', fillOpacity: 1, interactive: false })
     .bindTooltip(p.nombre, { permanent: true, direction: 'right', className: 'rot rotp', offset: [6, 0] }).addTo(capaMios));
 }
 async function abrirLista() {
   const pts = (await puntosTodos()).sort((a, b) => a.fecha < b.fecha ? 1 : -1); const l = $('lista'); l.innerHTML = '';
-  if (!pts.length) l.innerHTML = '<p class="nota">Todavía no hay puntos.</p>';
+  const ts = (await trazosTodos()).sort((a, b) => a.fecha < b.fecha ? 1 : -1);
+  if (!pts.length && !ts.length) l.innerHTML = '<p class="nota">Todavía no hay nada guardado.</p>';
+  ts.forEach(t => {
+    const d = document.createElement('div'); d.className = 'item';
+    const med = t.tipo === 'area' ? `${haTxt(t.area_m2)} · perímetro ${distTxt(t.longitud_m)} · ${t.vertices.length} vértices` : `${distTxt(t.longitud_m)} · ${t.tramos_m.length} tramo(s)`;
+    d.innerHTML = `<div class="t"><b>${esc(t.nombre)}</b> · ${t.tipo === 'area' ? 'Área' : 'Línea'} · ${esc(t.que)}<br>${med} · ${esc(t.upm)}<br><span class="nota">${esc(t.local)}${t.nota ? ' · ' + esc(t.nota) : ''}</span></div>`;
+    const v = document.createElement('button'); v.textContent = 'Ver';
+    v.onclick = () => { abrir(null); seguir(false); const k = t.tipo === 'area' ? 'areas' : 'lineas'; if (!VER[k]) alternarVer(k);
+      map.fitBounds(L.latLngBounds(t.vertices), { paddingTopLeft: [20, 170], paddingBottomRight: [110, 130], maxZoom: 19 }); };
+    const x = document.createElement('button'); x.textContent = 'Borrar'; x.className = 'borrar';
+    x.onclick = async () => { if (confirm(`¿Borrar ${t.nombre}? No se puede deshacer.`)) { await trazoBorrar(t.id); await pintarTrazos(); abrirLista(); } };
+    d.append(v, x); l.appendChild(d);
+  });
   pts.forEach(p => {
     const d = document.createElement('div'); d.className = 'item';
     d.innerHTML = `<div class="t"><b>${esc(p.nombre)}</b> · ${esc(p.upm)}<br>E ${miles(p.este)} · N ${miles(p.norte)}${p.precision != null ? ' · ±' + Math.round(p.precision) + ' m' : ''}<br><span class="nota">${esc(p.local)}${p.nota ? ' · ' + esc(p.nota) : ''}</span></div>`;
@@ -241,36 +271,64 @@ async function abrirLista() {
 }
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-/* ---------------- medir ---------------- */
-let MIDIENDO = false, VERT = [], guiaMed = null;
-function medirAbrir() { MIDIENDO = true; VERT = []; abrir(null); $('pMedir').classList.add('abierto'); $('mira').style.display = 'none'; pintarMed(); }
-function medirFin() {
+/* ---------------- medir, líneas y áreas ---------------- */
+let MIDIENDO = false, CERRADA = false, VERT = [], guiaMed = null;
+const haTxt = m2 => `${dec(m2 / 10000, 2)} ha`;
+const centro = vs => L.latLng(vs.reduce((a, v) => a + v.lat, 0) / vs.length, vs.reduce((a, v) => a + v.lng, 0) / vs.length);
+const mitad = (a, b) => L.latLng((a.lat + b.lat) / 2, (a.lng + b.lng) / 2);
+function etiqueta(ll, txt, cls = '') {
+  return L.marker(ll, { icon: L.divIcon({ className: 'etq ' + cls, html: `<span>${esc(txt)}</span>`, iconSize: [0, 0] }), interactive: false, keyboard: false });
+}
+function medidas(vs, cerrada) {              // tramos, total y área, planos en CTM12 (Origen Nacional)
+  const tramos = [];
+  for (let i = 1; i < vs.length; i++) tramos.push(distCTM(vs[i - 1], vs[i]));
+  if (cerrada && vs.length > 2) tramos.push(distCTM(vs[vs.length - 1], vs[0]));
+  let area = 0;
+  if (cerrada && vs.length > 2) {
+    const p = vs.map(v => aCTM(v.lat, v.lng));
+    for (let i = 0; i < p.length; i++) { const [x1, y1] = p[i], [x2, y2] = p[(i + 1) % p.length]; area += x1 * y2 - x2 * y1; }
+    area = Math.abs(area) / 2;
+  }
+  return { tramos, total: tramos.reduce((a, b) => a + b, 0), area };
+}
+function medirAbrir() {
+  MIDIENDO = true; CERRADA = false; VERT = []; abrir(null);
+  $('pMedir').classList.add('abierto'); $('mira').style.display = 'none'; marcarArea(); pintarMed();
+}
+function medirFin(preguntar) {
+  if (preguntar && VERT.length > 1 && !confirm('¿Salir sin guardar esta medición?')) return;
   MIDIENDO = false; VERT = []; capaMed.clearLayers(); if (guiaMed) { map.removeLayer(guiaMed); guiaMed = null; }
   $('pMedir').classList.remove('abierto'); $('mira').style.display = ''; actualizarMira();
 }
+function marcarArea() { const b = $('bMedArea'); b.classList.toggle('on', CERRADA); b.textContent = CERRADA ? 'Dejar como línea' : 'Cerrar área'; }
 function medirAgregar(ll) { VERT.push(L.latLng(ll)); pintarMed(); }
 function pintarMed() {
-  capaMed.clearLayers(); let tot = 0;
-  if (VERT.length > 1) {
+  capaMed.clearLayers();
+  const area = CERRADA && VERT.length > 2, m = medidas(VERT, area);
+  if (area) {
+    L.polygon(VERT, { color: '#F9B21A', weight: 3, fillColor: '#F9B21A', fillOpacity: .15, interactive: false }).addTo(capaMed);
+    etiqueta(centro(VERT), haTxt(m.area), 'grande').addTo(capaMed);
+  } else if (VERT.length > 1) {
     L.polyline(VERT, { color: '#000', weight: 6, opacity: .4, interactive: false }).addTo(capaMed);
     L.polyline(VERT, { color: '#F9B21A', weight: 3, interactive: false }).addTo(capaMed);
   }
-  VERT.forEach((v, i) => {
-    if (i) tot += map.distance(VERT[i - 1], v);
-    L.circleMarker(v, { radius: 5, color: '#111', weight: 1.5, fillColor: '#F9B21A', fillOpacity: 1, interactive: false })
-      .bindTooltip(i ? distTxt(tot) : 'Inicio', { permanent: true, direction: 'right', className: 'rot rotm', offset: [6, 0] }).addTo(capaMed);
-  });
+  m.tramos.forEach((d, i) => etiqueta(mitad(VERT[i], VERT[(i + 1) % VERT.length]), distTxt(d)).addTo(capaMed));
+  VERT.forEach((v, i) => L.circleMarker(v, { radius: i ? 5 : 6, color: '#111', weight: 1.5, fillColor: i ? '#F9B21A' : '#fff', fillOpacity: 1, interactive: false }).addTo(capaMed));
   textoMed();
 }
 function textoMed() {                       // totales, último tramo y línea guía hasta la cruz
   if (!MIDIENDO) return;
-  const c = map.getCenter(); let tot = 0;
-  for (let i = 1; i < VERT.length; i++) tot += map.distance(VERT[i - 1], VERT[i]);
-  let h = `<b>${distTxt(tot)}</b> en total · ${Math.max(VERT.length - 1, 0)} tramo(s)`;
+  const c = map.getCenter(), area = CERRADA && VERT.length > 2, m = medidas(VERT, area);
+  let h;
+  if (area) h = `<b>${haTxt(m.area)}</b> · perímetro ${distTxt(m.total)} · ${VERT.length} vértices`;
+  else {
+    h = `<b>${distTxt(m.total)}</b> en total · ${m.tramos.length} tramo(s)`;
+    if (CERRADA) h += '<br>Para cerrar un área hacen falta al menos 3 puntos.';
+    else if (VERT.length > 1) { const p = VERT[VERT.length - 2], u = VERT[VERT.length - 1]; h += `<br>Último tramo: ${distTxt(m.tramos[m.tramos.length - 1])} · rumbo ${rumboTxt(rumbo(p, u))}`; }
+  }
   if (VERT.length) {
     const u = VERT[VERT.length - 1];
-    if (VERT.length > 1) { const p = VERT[VERT.length - 2]; h += `<br>Último tramo: ${distTxt(map.distance(p, u))} · rumbo ${rumboTxt(rumbo(p, u))}`; }
-    h += `<br>Del último punto a la cruz: ${distTxt(map.distance(u, c))} · rumbo ${rumboTxt(rumbo(u, c))}`;
+    h += `<br>Del último punto a la cruz: ${distTxt(distCTM(u, c))} · rumbo ${rumboTxt(rumbo(u, c))}`;
     if (guiaMed) guiaMed.setLatLngs([u, c]); else guiaMed = L.polyline([u, c], { color: '#fff', weight: 2, dashArray: '6 6', interactive: false }).addTo(map);
   } else {
     h += '<br>Toca el mapa, o pon el primer punto en la cruz o en tu posición.';
@@ -278,52 +336,110 @@ function textoMed() {                       // totales, último tramo y línea g
   }
   $('medTxt').innerHTML = h;
 }
+const QUE = { area: ['Frente de explotación', 'Área intervenida o removida', 'Entable o planta de beneficio', 'Piscina o sedimentador', 'Botadero o estéril', 'Campamento', 'Otro'],
+              linea: ['Recorrido o acceso', 'Distancia entre puntos', 'Canal o drenaje', 'Frente lineal', 'Otro'] };
+async function medirGuardar() {              // pregunta qué es antes de guardar
+  const tipo = CERRADA ? 'area' : 'linea';
+  if (VERT.length < (tipo === 'area' ? 3 : 2)) { avisar(tipo === 'area' ? 'Para un área hacen falta al menos 3 puntos' : 'Pon al menos 2 puntos'); return; }
+  const m = medidas(VERT, tipo === 'area'), n = (await trazosTodos()).filter(t => t.tipo === tipo).length + 1;
+  $('tTitulo').textContent = tipo === 'area' ? 'Guardar área' : 'Guardar línea';
+  $('tResumen').innerHTML = (tipo === 'area' ? `<b>Área:</b> ${haTxt(m.area)} · <b>Perímetro:</b> ${distTxt(m.total)} · ${VERT.length} vértices`
+                                             : `<b>Longitud:</b> ${distTxt(m.total)} · ${m.tramos.length} tramo(s)`) + `<br>Tramos: ${m.tramos.map(distTxt).join(' · ')}`;
+  $('tNombre').value = (tipo === 'area' ? 'A' : 'L') + String(n).padStart(2, '0'); $('tNota').value = '';
+  const q = $('tQue'); q.innerHTML = ''; QUE[tipo].forEach(t => { const o = document.createElement('option'); o.textContent = t; q.appendChild(o); });
+  abrir('pTrazo');
+}
+async function trazoConfirmar() {
+  const tipo = CERRADA && VERT.length > 2 ? 'area' : 'linea', m = medidas(VERT, tipo === 'area'), ahora = new Date();
+  const reg = { id: ahora.getTime().toString(36) + Math.random().toString(36).slice(2, 6), tipo, nombre: $('tNombre').value.trim() || (tipo === 'area' ? 'Área' : 'Línea'),
+    que: $('tQue').value, upm: $('tUpm').value, nota: $('tNota').value.trim(), fecha: ahora.toISOString(), local: fechaLocal(ahora),
+    vertices: VERT.map(v => [+v.lat.toFixed(7), +v.lng.toFixed(7)]), ctm: VERT.map(v => aCTM(v.lat, v.lng).map(Math.round)),
+    tramos_m: m.tramos.map(d => Math.round(d * 10) / 10), longitud_m: Math.round(m.total * 10) / 10, area_m2: tipo === 'area' ? Math.round(m.area) : null };
+  await trazoGuardar(reg); abrir(null); medirFin(false);
+  const k = tipo === 'area' ? 'areas' : 'lineas'; if (!VER[k]) alternarVer(k);
+  await pintarTrazos(); avisar(`Guardada ${reg.nombre} · ` + (tipo === 'area' ? haTxt(reg.area_m2) : distTxt(m.total)));
+}
+async function pintarTrazos() {              // líneas en celeste y áreas en blanco con sombreado suave
+  const ts = await trazosTodos(); capaLineas.clearLayers(); capaAreas.clearLayers();
+  ts.forEach(t => {
+    const vs = t.vertices.map(([a, b]) => L.latLng(a, b));
+    if (t.tipo === 'area') {
+      L.polygon(vs, { color: '#fff', weight: 2, fillColor: '#fff', fillOpacity: .14, interactive: false }).addTo(capaAreas);
+      etiqueta(centro(vs), `${t.nombre} · ${haTxt(t.area_m2)}`, 'grande').addTo(capaAreas);
+    } else {
+      L.polyline(vs, { color: '#000', weight: 5, opacity: .35, interactive: false }).addTo(capaLineas);
+      L.polyline(vs, { color: '#4DD0E1', weight: 3, interactive: false }).addTo(capaLineas);
+      etiqueta(vs[vs.length - 1], `${t.nombre} · ${distTxt(t.longitud_m)}`, 'der').addTo(capaLineas);
+    }
+  });
+  contar();
+}
+async function contar() { $('nPuntos').textContent = (await puntosTodos()).length + (await trazosTodos()).length; }
 
 /* ---------------- exportar ---------------- */
 async function datosExport() {
-  const pts = (await puntosTodos()).sort((a, b) => a.fecha < b.fecha ? -1 : 1);
-  const q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const pts = (await puntosTodos()).sort((a, b) => a.fecha < b.fecha ? -1 : 1), ts = (await trazosTodos()).sort((a, b) => a.fecha < b.fecha ? -1 : 1);
+  const q = v => `"${String(v ?? '').replace(/"/g, '""')}"`, c = v => String(v).replace('.', ',');
   const cab = ['n', 'nombre', 'upm', 'nota', 'fecha_hora', 'latitud', 'longitud', 'precision_m', 'este_ctm12', 'norte_ctm12', 'origen', 'lecturas'];
-  const filas = pts.map((p, i) => [i + 1, q(p.nombre), q(p.upm), q(p.nota), p.local, p.lat.toFixed(6).replace('.', ','), p.lon.toFixed(6).replace('.', ','), p.precision != null ? String(p.precision).replace('.', ',') : '', p.este, p.norte, q(p.origen), p.muestras].join(';'));
+  const filas = pts.map((p, i) => [i + 1, q(p.nombre), q(p.upm), q(p.nota), p.local, c(p.lat.toFixed(6)), c(p.lon.toFixed(6)), p.precision != null ? c(p.precision) : '', p.este, p.norte, q(p.origen), p.muestras].join(';'));
   const csv = '﻿' + cab.join(';') + '\n' + filas.join('\n') + '\n';
-  const kml = `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>Puntos de campo ZRP 753</name>` +
+  const cabT = ['n', 'nombre', 'tipo', 'que_es', 'upm', 'nota', 'fecha_hora', 'longitud_o_perimetro_m', 'area_ha', 'area_m2', 'vertices', 'tramos_m', 'vertices_ctm12_este_norte'];
+  const filasT = ts.map((t, i) => [i + 1, q(t.nombre), t.tipo === 'area' ? 'área' : 'línea', q(t.que), q(t.upm), q(t.nota), t.local, c(t.longitud_m),
+    t.area_m2 != null ? c((t.area_m2 / 10000).toFixed(2)) : '', t.area_m2 ?? '', t.vertices.length, q(t.tramos_m.map(c).join(' | ')), q(t.ctm.map(([e, n]) => `${e} ${n}`).join(' | '))].join(';'));
+  const csvT = '﻿' + cabT.join(';') + '\n' + filasT.join('\n') + '\n';
+  const kc = vs => vs.map(([la, lo]) => `${lo},${la},0`).join(' ');
+  const descT = t => `${t.que} · ${t.upm} · ${t.local} · ` + (t.tipo === 'area' ? `${haTxt(t.area_m2)} · perímetro ${t.longitud_m} m` : `${t.longitud_m} m`) + ` · tramos (m): ${t.tramos_m.join(', ')}${t.nota ? ' · ' + t.nota : ''}`;
+  const kml = `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>Campo ZRP 753</name>` +
+    `<Style id="area"><LineStyle><color>ffffffff</color><width>2</width></LineStyle><PolyStyle><color>33ffffff</color></PolyStyle></Style>` +
+    `<Style id="linea"><LineStyle><color>ffe1d04d</color><width>3</width></LineStyle></Style>` +
     pts.map(p => `<Placemark><name>${esc(p.nombre)}</name><description>${esc(`${p.upm} · ${p.local} · E ${p.este} N ${p.norte} (CTM12) · ±${p.precision ?? '-'} m · ${p.origen}${p.nota ? ' · ' + p.nota : ''}`)}</description><Point><coordinates>${p.lon},${p.lat},0</coordinates></Point></Placemark>`).join('') +
+    ts.map(t => `<Placemark><name>${esc(t.nombre)}</name><styleUrl>#${t.tipo}</styleUrl><description>${esc(descT(t))}</description>` + (t.tipo === 'area'
+      ? `<Polygon><outerBoundaryIs><LinearRing><coordinates>${kc([...t.vertices, t.vertices[0]])}</coordinates></LinearRing></outerBoundaryIs></Polygon>`
+      : `<LineString><coordinates>${kc(t.vertices)}</coordinates></LineString>`) + `</Placemark>`).join('') +
     `</Document></kml>\n`;
-  const gj = JSON.stringify({ type: 'FeatureCollection', features: pts.map(p => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [p.lon, p.lat] }, properties: { ...p } })) }, null, 1);
+  const lonlat = vs => vs.map(([la, lo]) => [lo, la]);
+  const gj = JSON.stringify({ type: 'FeatureCollection', features: [
+    ...pts.map(p => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [p.lon, p.lat] }, properties: { ...p } })),
+    ...ts.map(t => ({ type: 'Feature', geometry: t.tipo === 'area' ? { type: 'Polygon', coordinates: [lonlat([...t.vertices, t.vertices[0]])] } : { type: 'LineString', coordinates: lonlat(t.vertices) },
+      properties: { id: t.id, tipo: t.tipo, nombre: t.nombre, que_es: t.que, upm: t.upm, nota: t.nota, fecha: t.fecha, local: t.local, longitud_o_perimetro_m: t.longitud_m,
+        area_m2: t.area_m2, area_ha: t.area_m2 != null ? +(t.area_m2 / 10000).toFixed(2) : null, tramos_m: t.tramos_m, vertices_ctm12: t.ctm } }))] }, null, 1);
   const d = new Date(), z = n => String(n).padStart(2, '0');
-  const base = `ZRP753_puntos_campo_${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}_${z(d.getHours())}${z(d.getMinutes())}`;
-  return { pts, csv, kml, gj, base };
+  const base = `ZRP753_campo_${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}_${z(d.getHours())}${z(d.getMinutes())}`;
+  return { pts, ts, csv, csvT, kml, gj, base };
 }
-async function compartir(archivo) {
-  if (navigator.canShare && navigator.canShare({ files: [archivo] })) {
-    try { await navigator.share({ files: [archivo], title: archivo.name }); return; }
+async function compartir(archivos) {
+  if (navigator.canShare && navigator.canShare({ files: archivos })) {
+    try { await navigator.share({ files: archivos, title: archivos[0].name }); return; }
     catch (e) { if (e.name === 'AbortError') return; }
   }
-  const a = document.createElement('a'); a.href = URL.createObjectURL(archivo); a.download = archivo.name; document.body.appendChild(a); a.click(); a.remove();
+  archivos.forEach(f => { const a = document.createElement('a'); a.href = URL.createObjectURL(f); a.download = f.name; document.body.appendChild(a); a.click(); a.remove(); });
 }
 async function exportarZip() {
-  const x = await datosExport(); if (!x.pts.length) { avisar('No hay puntos para exportar'); return; }
-  const z = new JSZip(); z.file(x.base + '.csv', x.csv); z.file(x.base + '.kml', x.kml); z.file(x.base + '.geojson', x.gj);
+  const x = await datosExport(); if (!x.pts.length && !x.ts.length) { avisar('No hay nada para exportar'); return; }
+  const z = new JSZip(); z.file(x.base + '_puntos.csv', x.csv); if (x.ts.length) z.file(x.base + '_lineas_y_areas.csv', x.csvT);
+  z.file(x.base + '.kml', x.kml); z.file(x.base + '.geojson', x.gj);
   const blob = await z.generateAsync({ type: 'blob' });
-  await compartir(new File([blob], x.base + '.zip', { type: 'application/zip' }));
+  await compartir([new File([blob], x.base + '.zip', { type: 'application/zip' })]);
 }
 async function exportarCsv() {
-  const x = await datosExport(); if (!x.pts.length) { avisar('No hay puntos para exportar'); return; }
-  await compartir(new File([x.csv], x.base + '.csv', { type: 'text/csv' }));
+  const x = await datosExport(); if (!x.pts.length && !x.ts.length) { avisar('No hay nada para exportar'); return; }
+  const fs = [new File([x.csv], x.base + '_puntos.csv', { type: 'text/csv' })];
+  if (x.ts.length) fs.push(new File([x.csvT], x.base + '_lineas_y_areas.csv', { type: 'text/csv' }));
+  await compartir(fs);
 }
 async function copiarTexto() {
-  const x = await datosExport(); if (!x.pts.length) { avisar('No hay puntos para copiar'); return; }
-  try { await navigator.clipboard.writeText(x.csv.replace('﻿', '')); avisar('Copiado: pégalo en WhatsApp o en un correo'); }
+  const x = await datosExport(); if (!x.pts.length && !x.ts.length) { avisar('No hay nada para copiar'); return; }
+  try { await navigator.clipboard.writeText((x.csv + (x.ts.length ? '\n' + x.csvT : '')).replace(/﻿/g, '')); avisar('Copiado: pégalo en WhatsApp o en un correo'); }
   catch (e) { avisar('No se pudo copiar; usa «Compartir solo CSV»'); }
 }
 
 /* ---------------- paquete de datos ---------------- */
 async function estadoDatos() {
-  const capas = (await metaGet('capas')) || [], upm = (await metaGet('upm')) || [], pts = await puntosTodos();
+  const capas = (await metaGet('capas')) || [], upm = (await metaGet('upm')) || [], pts = await puntosTodos(), ts = await trazosTodos();
   let est = '';
   try { const e = await navigator.storage.estimate(); est = ` · ${(e.usage / 1e6).toFixed(0)} MB usados`; } catch (e) {}
-  $('estadoDatos').innerHTML = capas.length ? `<b>Mapas:</b> ${capas.map(c => c.boton).join(', ')}<br><b>Puntos de UPM:</b> ${upm.length} · <b>Tus puntos:</b> ${pts.length}${est}`
-                                            : `Sin mapas cargados. Tus puntos: ${pts.length}${est}`;
+  $('estadoDatos').innerHTML = capas.length ? `<b>Mapas:</b> ${capas.map(c => c.boton).join(', ')}<br><b>Puntos de UPM:</b> ${upm.length}<br><b>Tus puntos:</b> ${pts.length} · <b>Líneas y áreas:</b> ${ts.length}${est}`
+                                            : `Sin mapas cargados. Tus puntos: ${pts.length} · líneas y áreas: ${ts.length}${est}`;
 }
 async function importarZip(buf) {
   const pr = $('progreso'); pr.style.display = 'block'; pr.textContent = 'Abriendo el paquete…';
@@ -354,7 +470,11 @@ map.on('click', e => { if (MIDIENDO) medirAgregar(e.latlng); });
 $('bMedCruz').onclick = () => medirAgregar(map.getCenter());
 $('bMedYo').onclick = () => { if (POS) medirAgregar([POS.lat, POS.lon]); else avisar('Sin GPS todavía'); };
 $('bMedDeshacer').onclick = () => { VERT.pop(); pintarMed(); };
-$('bMedFin').onclick = medirFin;
+$('bMedFin').onclick = () => medirFin(true);
+$('bMedArea').onclick = () => { CERRADA = !CERRADA; marcarArea(); pintarMed(); };
+$('bMedGuardar').onclick = medirGuardar;
+$('bTCancelar').onclick = () => abrir(null); $('bTGuardar').onclick = trazoConfirmar;
+$('segVer').onclick = e => { const v = e.target.dataset.v; if (v) alternarVer(v); };
 $('bPunto').onclick = abrirNuevoPunto;
 $('bCancelar').onclick = () => abrir(null);
 $('bGuardar').onclick = () => guardarPunto(posicionActual());
@@ -368,13 +488,14 @@ $('bCeldas').onclick = alternarCeldas;
 $('fZip').onchange = async e => { const f = e.target.files[0]; if (!f) return; try { await importarZip(await f.arrayBuffer()); } catch (err) { $('progreso').textContent = 'Error al cargar: ' + err.message; } e.target.value = ''; };
 $('bBorrarMapas').onclick = async () => { if (!confirm('¿Borrar los mapas y los puntos de UPM de este teléfono? Tus puntos no se borran.')) return;
   await tx('teselas', 'readwrite', s => s.clear()); await tx('meta', 'readwrite', s => s.clear()); location.reload(); };
-$('bBorrarPuntos').onclick = async () => { if (!confirm('¿Borrar TODOS tus puntos? Exporta antes. No se puede deshacer.')) return;
-  await tx('puntos', 'readwrite', s => s.clear()); await pintarMios(); estadoDatos(); };
+$('bBorrarPuntos').onclick = async () => { if (!confirm('¿Borrar TODOS tus puntos, líneas y áreas? Exporta antes. No se puede deshacer.')) return;
+  await tx('puntos', 'readwrite', s => s.clear()); await tx('trazos', 'readwrite', s => s.clear()); await pintarMios(); await pintarTrazos(); estadoDatos(); };
 
 (async () => {
   await abrirDB();
   try { if (navigator.storage && navigator.storage.persist) await navigator.storage.persist(); } catch (e) {}
-  await cargarZRP(); await cargarCapas(); await pintarMios(); actualizarMira(); iniciarGPS();
+  await cargarZRP(); VER = { ...VER, ...((await metaGet('ver')) || {}) };
+  await cargarCapas(); await pintarMios(); await pintarTrazos(); aplicarVer(); actualizarMira(); iniciarGPS();
   if ('serviceWorker' in navigator) {        // al publicar una versión nueva, recarga una vez para estrenarla
     const habia = !!navigator.serviceWorker.controller; let recargada = false;
     navigator.serviceWorker.addEventListener('controllerchange', () => { if (habia && !recargada) { recargada = true; location.reload(); } });

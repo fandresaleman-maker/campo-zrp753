@@ -52,6 +52,12 @@
   #pMedir .fila button { flex:1; height:46px; border-radius:10px; border:1px solid var(--line); background:#fff; color:var(--navy); font-size:13.5px; font-weight:600; }
   #pMedir .fila button.prim { background:var(--navy); color:#fff; border-color:var(--navy); }
   .rotm { color:#fff; font-weight:600; font-size:12px; }
+  #pMedir .fila button.on { background:#fff3d6; border-color:var(--gold); color:#7a5200; }
+  /* rótulos de tramos, líneas y áreas */
+  .etq span { position:absolute; left:0; top:0; transform:translate(-50%, -50%); white-space:nowrap; color:#fff; font-size:11.5px; font-weight:600;
+              text-shadow:0 0 2px #000, 0 0 2px #000, 0 0 3px #000; pointer-events:none; }
+  .etq.der span { transform:translate(8px, -50%); }
+  .etq.grande span { font-size:13px; font-weight:700; }
   /* paneles */
   .panel { position:fixed; z-index:2000; left:0; right:0; bottom:0; max-height:86vh; overflow:auto; background:#fff; border-radius:16px 16px 0 0;
            padding:16px 16px calc(env(safe-area-inset-bottom) + 16px); box-shadow:0 -6px 24px rgba(0,0,0,.35); display:none; }
@@ -93,11 +99,12 @@
   <path d="M23 2v13M23 31v13M2 23h13M31 23h13" stroke="#C10617" stroke-width="2.4"/></g></svg>
 <div id="mira">—</div>
 <div id="pMedir"><div id="medTxt">Toca el mapa o usa los botones para poner puntos de medición.</div>
-  <div class="fila"><button id="bMedCruz" class="prim">＋ En la cruz</button><button id="bMedYo">＋ Mi posición</button><button id="bMedDeshacer">Deshacer</button><button id="bMedFin">Terminar</button></div></div>
+  <div class="fila"><button id="bMedCruz" class="prim">＋ En la cruz</button><button id="bMedYo">＋ Mi posición</button><button id="bMedDeshacer">Deshacer</button></div>
+  <div class="fila"><button id="bMedArea">Cerrar área</button><button id="bMedGuardar" class="prim">Guardar</button><button id="bMedFin">Salir</button></div></div>
 <div id="barra">
   <button id="bCentrar"><b>◎</b>Mi posición</button>
   <button id="bPunto" class="prim"><b>＋</b>Punto</button>
-  <button id="bLista"><b id="nPuntos">0</b>Puntos</button>
+  <button id="bLista"><b id="nPuntos">0</b>Guardado</button>
   <button id="bExportar"><b>⇪</b>Exportar</button>
   <button id="bDatos"><b>⚙</b>Datos</button>
 </div>
@@ -114,11 +121,23 @@
   <p class="nota">Con «Mi posición» en azul el punto toma tu GPS exacto; si mueves el mapa, toma la cruz roja. Promediar mejora la posición cuando la precisión es mala. Las fotos de evidencia se toman con Timestamp Camera; al regreso se enlazan a estos puntos por hora y ubicación.</p>
 </div>
 
-<div class="panel" id="pLista"><h2>Puntos tomados</h2><div id="lista"></div>
+<div class="panel" id="pTrazo"><h2 id="tTitulo">Guardar medición</h2>
+  <div class="caja" id="tResumen">—</div>
+  <label for="tNombre">Nombre</label><input id="tNombre" autocomplete="off">
+  <label for="tQue">¿Qué es?</label><select id="tQue"></select>
+  <label for="tUpm">UPM o minero</label><select id="tUpm"></select>
+  <label for="tNota">Nota</label><textarea id="tNota" placeholder="Qué se midió, estado, foto de Timestamp…"></textarea>
+  <div class="fila"><button id="bTCancelar">Cancelar</button><button id="bTGuardar" class="prim">Guardar</button></div>
+</div>
+
+<div class="panel" id="pLista"><h2>Lo guardado</h2>
+  <div class="seg" id="segVer"><button data-v="puntos" class="on">Puntos</button><button data-v="lineas" class="on">Líneas</button><button data-v="areas" class="on">Áreas</button></div>
+  <p class="nota">Toca Puntos, Líneas o Áreas para mostrarlos u ocultarlos en el mapa.</p>
+  <div id="lista"></div>
   <div class="fila"><button id="bCerrarLista">Cerrar</button></div></div>
 
 <div class="panel" id="pExportar"><h2>Exportar puntos</h2>
-  <p class="nota">Exporta al final de cada día. El archivo trae las coordenadas geográficas y el Este y el Norte en CTM12 (Origen Nacional).</p>
+  <p class="nota">Exporta al final de cada día. Trae tus puntos, líneas y áreas con las coordenadas geográficas y el Este y el Norte en CTM12 (Origen Nacional); las áreas en hectáreas.</p>
   <div class="fila"><button id="bZip" class="prim">Compartir todo (ZIP: CSV, KML y GeoJSON)</button></div>
   <div class="fila"><button id="bCsv">Compartir solo CSV</button><button id="bCopiar">Copiar como texto</button></div>
   <div class="fila"><button id="bCerrarExp">Cerrar</button></div></div>
@@ -129,9 +148,9 @@
   <input type="file" id="fZip" accept=".zip,application/zip">
   <div class="caja" id="progreso" style="display:none;margin-top:10px"></div>
   <div class="fila"><button id="bCeldas">Mostrar celdas</button></div>
-  <div class="fila"><button id="bBorrarMapas" class="peligro">Borrar mapas</button><button id="bBorrarPuntos" class="peligro">Borrar puntos</button></div>
+  <div class="fila"><button id="bBorrarMapas" class="peligro">Borrar mapas</button><button id="bBorrarPuntos" class="peligro">Borrar lo tomado</button></div>
   <div class="fila"><button id="bCerrarDatos">Cerrar</button></div>
-  <p class="nota">Los mapas, los nombres de los mineros y tus puntos quedan solo en este teléfono; no se suben a internet.</p></div>
+  <p class="nota">Los mapas, los nombres de los mineros y lo que tomes (puntos, líneas y áreas) quedan solo en este teléfono; no se suben a internet.</p></div>
 
 <div id="aviso"></div>
 <script src="leaflet.js"></script>
