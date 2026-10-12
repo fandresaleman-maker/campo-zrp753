@@ -32,6 +32,7 @@ const puntoGuardar = p => tx('puntos', 'readwrite', s => s.put(p));
 const puntoBorrar = id => tx('puntos', 'readwrite', s => s.delete(id));
 
 /* ---------------- mapa ---------------- */
+$('map').style.background = '#000';         // negro: el borde de las teselas de zoom bajo se funde con el fondo
 const map = L.map('map', { zoomControl: false, attributionControl: false, preferCanvas: true, maxZoom: 20, tap: false });
 map.fitBounds([[7.636, -74.776], [7.679, -74.701]]);
 const capaZRP = L.layerGroup().addTo(map), capaUPM = L.layerGroup().addTo(map), capaMios = L.layerGroup().addTo(map);
@@ -41,7 +42,7 @@ const TeselaIDB = L.GridLayer.extend({
   createTile(c, done) {
     const img = document.createElement('img'); img.alt = '';
     teselaGet(`${this.options.id}/${c.z}/${c.x}/${c.y}`).then(b => {
-      if (!b) { done(null, img); return; }
+      if (!b) { img.style.visibility = 'hidden'; done(null, img); return; }
       const u = URL.createObjectURL(b);
       img.onload = () => { URL.revokeObjectURL(u); done(null, img); };
       img.onerror = () => done(null, img); img.src = u;
@@ -83,9 +84,16 @@ async function cargarCapas() {
   CAPAS.forEach((c, i) => {
     const b = document.createElement('button'); b.textContent = c.boton; b.onclick = () => verCapa(i); cont.appendChild(b);
   });
+  const ir = document.createElement('button'); ir.textContent = 'Ir a ZRP'; ir.onclick = irZRP;
+  Object.assign(ir.style, { marginTop: '8px', background: 'rgba(11,47,124,.92)', borderColor: '#F9B21A', color: '#fff' });
+  cont.appendChild(ir);
   if (CAPAS.length) verCapa(0); else { $('fecha').style.display = 'block'; $('fecha').textContent = 'Sin mapas: carga el paquete en ⚙ Datos'; }
   pintarUPM(await metaGet('upm') || []);
   llenarUPM();
+}
+function irZRP() {                          // lleva el mapa a la ZRP desde donde esté
+  const b = ZRP ? L.geoJSON(ZRP).getBounds() : L.latLngBounds([[7.641, -74.770], [7.673, -74.707]]);
+  map.setView(b.getCenter(), Math.max(13, map.getBoundsZoom(b, false, L.point(16, 230))));
 }
 function verCapa(i) {
   if (capaBase) map.removeLayer(capaBase);
@@ -291,5 +299,9 @@ $('bBorrarPuntos').onclick = async () => { if (!confirm('¿Borrar TODOS tus punt
   await abrirDB();
   try { if (navigator.storage && navigator.storage.persist) await navigator.storage.persist(); } catch (e) {}
   await cargarZRP(); await cargarCapas(); await pintarMios(); iniciarGPS();
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator) {        // al publicar una versión nueva, recarga una vez para estrenarla
+    const habia = !!navigator.serviceWorker.controller; let recargada = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (habia && !recargada) { recargada = true; location.reload(); } });
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
 })();
