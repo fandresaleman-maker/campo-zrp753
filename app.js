@@ -145,7 +145,7 @@ function llenarUPM() {                      // listas de mineros: los del paquet
   const nombres = [...PERSONAS, ...EXTRA.filter(n => !PERSONAS.includes(n))];
   const llenar = (id, ops) => { const s = $(id), v = s.value; s.innerHTML = '';
     ops.forEach(n => { const o = document.createElement('option'); o.textContent = n; s.appendChild(o); }); if (ops.includes(v)) s.value = v; };
-  llenar('fUpm', [SIN, ...nombres, OTRO]); llenar('tUpm', [SIN, ...nombres, OTRO]); llenar('fMinero', [TODOS, ...nombres, SIN]);
+  llenar('fUpm', [SIN, ...nombres, OTRO]); llenar('tUpm', [SIN, ...nombres, OTRO]); llenar('eUpm', [SIN, ...nombres, OTRO]); llenar('fMinero', [TODOS, ...nombres, SIN]);
   $('fMinero').value = FILTRO;
 }
 async function otroMinero(sel) {             // pide el nombre del otro minero o tercero y lo suma al listado
@@ -267,6 +267,7 @@ async function abrirLista() {
   $('listaFiltro').textContent = FILTRO === TODOS ? 'Todo lo tomado en campo.' : `Solo lo de: ${FILTRO}. Cambia el minero en la barra de abajo para ver lo demás.`;
   if (!pts.length && !ts.length) l.innerHTML = '<p class="nota">Todavía no hay nada guardado.</p>';
   ts.forEach(t => {
+    const REG = t, REG_TIPO = 'trazos';
     const d = document.createElement('div'); d.className = 'item';
     const med = t.tipo === 'area' ? `${haTxt(t.area_m2)} · perímetro ${distTxt(t.longitud_m)} · ${t.vertices.length} vértices` : `${distTxt(t.longitud_m)} · ${t.tramos_m.length} tramo(s)`;
     d.innerHTML = `<div class="t"><b>${esc(rotulo(t))}</b> · ${t.tipo === 'area' ? 'Área' : 'Línea'} · ${esc(t.que)}<br>${med} · ${esc(t.upm)}<br><span class="nota">${esc(t.local)}${t.nota ? ' · ' + esc(t.nota) : ''}</span></div>`;
@@ -275,15 +276,18 @@ async function abrirLista() {
       map.fitBounds(L.latLngBounds(t.vertices), { paddingTopLeft: [20, 170], paddingBottomRight: [110, 130], maxZoom: 19 }); };
     const x = document.createElement('button'); x.textContent = 'Borrar'; x.className = 'borrar';
     x.onclick = async () => { if (confirm(`¿Borrar ${rotulo(t)}? No se puede deshacer.`)) { await trazoBorrar(t.id); await pintarTrazos(); abrirLista(); } };
-    d.append(v, x); l.appendChild(d);
+    const e = document.createElement('button'); e.textContent = 'Editar'; e.onclick = () => abrirEditar(REG_TIPO, REG);
+    d.append(v, e, x); l.appendChild(d);
   });
   pts.forEach(p => {
+    const REG = p, REG_TIPO = 'puntos';
     const d = document.createElement('div'); d.className = 'item';
     d.innerHTML = `<div class="t"><b>${esc(rotulo(p))}</b> · ${esc(p.upm)}<br>E ${miles(p.este)} · N ${miles(p.norte)}${p.precision != null ? ' · ±' + Math.round(p.precision) + ' m' : ''}<br><span class="nota">${esc(p.local)}${p.nota ? ' · ' + esc(p.nota) : ''}</span></div>`;
     const v = document.createElement('button'); v.textContent = 'Ver'; v.onclick = () => { abrir(null); seguir(false); map.setView([p.lat, p.lon], 18); };
     const x = document.createElement('button'); x.textContent = 'Borrar'; x.className = 'borrar';
     x.onclick = async () => { if (confirm(`¿Borrar ${rotulo(p)}? No se puede deshacer.`)) { await puntoBorrar(p.id); await pintarMios(); abrirLista(); } };
-    d.append(v, x); l.appendChild(d);
+    const e = document.createElement('button'); e.textContent = 'Editar'; e.onclick = () => abrirEditar(REG_TIPO, REG);
+    d.append(v, e, x); l.appendChild(d);
   });
   abrir('pLista');
 }
@@ -376,6 +380,29 @@ async function trazoConfirmar() {
   await trazoGuardar(reg); await gastar(reg.codigo); abrir(null); medirFin(false);
   const k = tipo === 'area' ? 'areas' : 'lineas'; if (!VER[k]) alternarVer(k);
   await pintarTrazos(); avisar(`Guardada ${rotulo(reg)} · ` + (tipo === 'area' ? haTxt(reg.area_m2) : distTxt(m.total)));
+}
+let EDIT = null;
+function ponerValor(sel, v) {                // selecciona v aunque no esté en la lista (registros viejos)
+  if (v && ![...sel.options].some(o => o.text === v)) { const o = document.createElement('option'); o.textContent = v; sel.insertBefore(o, sel.lastChild); }
+  sel.value = v || SIN;
+}
+function abrirEditar(almacen, r) {
+  EDIT = { almacen, r };
+  $('eCodigo').textContent = r.codigo || r.nombre || '';
+  $('eResumen').innerHTML = almacen === 'puntos' ? `<b>Punto</b> · E ${miles(r.este)} · N ${miles(r.norte)}${r.precision != null ? ' · ±' + Math.round(r.precision) + ' m' : ''}<br>${esc(r.local)}`
+    : (r.tipo === 'area' ? `<b>Área</b> · ${haTxt(r.area_m2)} · perímetro ${distTxt(r.longitud_m)}` : `<b>Línea</b> · ${distTxt(r.longitud_m)} · ${r.tramos_m.length} tramo(s)`) + `<br>${esc(r.local)}`;
+  $('eCorto').value = r.nombre || '';
+  $('eQueFila').style.display = almacen === 'trazos' ? '' : 'none';
+  if (almacen === 'trazos') { const q = $('eQue'); q.innerHTML = ''; QUE[r.tipo].forEach(t => { const o = document.createElement('option'); o.textContent = t; q.appendChild(o); }); if (r.que && !QUE[r.tipo].includes(r.que)) { const o = document.createElement('option'); o.textContent = r.que; q.appendChild(o); } q.value = r.que || QUE[r.tipo][0]; }
+  ponerValor($('eUpm'), r.upm); $('eNota').value = r.nota || '';
+  abrir('pEditar');
+}
+async function guardarEdicion() {
+  const { almacen, r } = EDIT;
+  const nuevo = { ...r, nombre: $('eCorto').value.trim() || (r.codigo ? '' : r.nombre), upm: $('eUpm').value, nota: $('eNota').value.trim(), editado: fechaLocal(new Date()) };
+  if (almacen === 'trazos') nuevo.que = $('eQue').value;
+  if (almacen === 'puntos') { await puntoGuardar(nuevo); await pintarMios(); } else { await trazoGuardar(nuevo); await pintarTrazos(); }
+  avisar(`Editado ${rotulo(nuevo)}`); abrirLista();
 }
 async function pintarTrazos() {              // líneas en celeste y áreas en blanco con sombreado suave
   const ts = (await trazosTodos()).filter(pasaFiltro); capaLineas.clearLayers(); capaAreas.clearLayers();
@@ -495,7 +522,8 @@ $('bTCancelar').onclick = () => abrir(null); $('bTGuardar').onclick = trazoConfi
 $('bMedir').onclick = medirAbrir;
 $('filtros').onclick = e => { const v = e.target.dataset.v; if (v) alternarVer(v); };
 $('fMinero').onchange = async e => { FILTRO = e.target.value; await pintarMios(); await pintarTrazos(); };
-$('fUpm').onchange = e => otroMinero(e.target); $('tUpm').onchange = e => otroMinero(e.target);
+$('fUpm').onchange = e => otroMinero(e.target); $('tUpm').onchange = e => otroMinero(e.target); $('eUpm').onchange = e => otroMinero(e.target);
+$('bECancelar').onclick = () => abrirLista(); $('bEGuardar').onclick = guardarEdicion;
 $('bPunto').onclick = abrirNuevoPunto;
 $('bCancelar').onclick = () => abrir(null);
 $('bGuardar').onclick = () => guardarPunto(posicionActual());
@@ -516,6 +544,8 @@ $('bBorrarPuntos').onclick = async () => { if (!confirm('¿Borrar TODOS tus punt
   await abrirDB();
   try { if (navigator.storage && navigator.storage.persist) await navigator.storage.persist(); } catch (e) {}
   await cargarZRP(); VER = { ...VER, ...((await metaGet('ver')) || {}) };
+  for (const p of await puntosTodos()) if (!p.codigo && /^P\d+$/.test(p.nombre || '')) await puntoGuardar({ ...p, codigo: p.nombre, nombre: '' });   // registros de antes: «P01» pasa a consecutivo
+  for (const t of await trazosTodos()) if (!t.codigo && /^[LA]\d+$/.test(t.nombre || '')) await trazoGuardar({ ...t, codigo: t.nombre, nombre: '' });
   EXTRA = (await metaGet('personasExtra')) || [];   // más los nombres ya usados en lo tomado, por si se borró el paquete
   [...(await puntosTodos()), ...(await trazosTodos())].forEach(r => { if (r.upm && r.upm !== SIN && r.upm !== OTRO && !EXTRA.includes(r.upm)) EXTRA.push(r.upm); });
   await cargarCapas(); await pintarMios(); await pintarTrazos(); aplicarVer(); actualizarMira(); iniciarGPS();

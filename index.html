@@ -86,6 +86,7 @@
   .item .t { flex:1; font-size:14px; line-height:1.35; } .item .t b { font-size:16px; color:var(--navy); }
   .item button { height:40px; padding:0 12px; border-radius:10px; border:1px solid var(--line); background:#fff; color:var(--navy); font-weight:600; }
   .item button.borrar { color:var(--red); }
+  .item { gap:6px; } .item button { padding:0 9px; }
   #aviso { position:fixed; z-index:3000; left:50%; transform:translateX(-50%); bottom:calc(env(safe-area-inset-bottom) + 176px); background:rgba(20,20,20,.9); color:#fff;
            padding:10px 14px; border-radius:12px; font-size:15px; display:none; max-width:90%; text-align:center; }
   /* rótulos delgados sobre el mapa */
@@ -136,6 +137,16 @@
   <label for="tCorto">Nombre corto</label><input id="tCorto" maxlength="30" autocomplete="off" placeholder="Opcional: botadero, vía al frente…">
   <label for="tNota">Nota</label><textarea id="tNota" placeholder="Qué se midió, estado, foto de Timestamp…"></textarea>
   <div class="fila"><button id="bTCancelar">Cancelar</button><button id="bTGuardar" class="prim">Guardar</button></div>
+</div>
+
+<div class="panel" id="pEditar"><h2>Editar <span id="eCodigo">P01</span></h2>
+  <div class="caja" id="eResumen">—</div>
+  <label for="eCorto">Nombre corto</label><input id="eCorto" maxlength="30" autocomplete="off" placeholder="Opcional">
+  <div id="eQueFila"><label for="eQue">¿Qué es?</label><select id="eQue"></select></div>
+  <label for="eUpm">UPM o minero</label><select id="eUpm"></select>
+  <label for="eNota">Nota</label><textarea id="eNota"></textarea>
+  <div class="fila"><button id="bECancelar">Cancelar</button><button id="bEGuardar" class="prim">Guardar cambios</button></div>
+  <p class="nota">El consecutivo, la ubicación y las medidas no se editan.</p>
 </div>
 
 <div class="panel" id="pLista"><h2>Lo guardado</h2>
