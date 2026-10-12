@@ -38,10 +38,17 @@
   #barra button.prim { flex:1.4; background:var(--navy); color:#fff; border-color:var(--navy); font-size:15px; }
   #barra button b { display:block; font-size:18px; line-height:20px; }
   #barra button.on { background:#1a73e8; color:#fff; border-color:#1a73e8; }
+  /* fila de filtros sobre la barra: minero y qué se ve de lo tomado en campo */
+  #filtros { position:fixed; z-index:1000; left:0; right:0; bottom:calc(env(safe-area-inset-bottom) + 72px); display:flex; gap:6px; padding:6px 10px;
+             background:rgba(255,255,255,.95); border-top:1px solid var(--line); }
+  #filtros select { flex:2.2; min-width:0; height:36px; border-radius:10px; border:1px solid var(--line); background:#fff; color:var(--navy); font-size:13px; font-weight:600; padding:0 6px; }
+  #filtros button { flex:1; height:36px; border-radius:10px; border:1px solid var(--line); background:#fff; color:#8a93a6; font-size:12.5px; font-weight:600; text-decoration:line-through; padding:0 2px; }
+  #filtros button.on { background:var(--navy); color:#fff; border-color:var(--navy); text-decoration:none; }
+  .panel h2 span { color:var(--red); }
   /* cruz del centro del mapa */
   #cruz { position:fixed; z-index:998; left:50%; top:50%; width:46px; height:46px; margin:-23px 0 0 -23px; pointer-events:none; }
   /* rótulo de la cruz y caja de medición */
-  #mira { position:fixed; z-index:999; left:10px; right:10px; bottom:calc(env(safe-area-inset-bottom) + 84px); background:rgba(255,255,255,.93);
+  #mira { position:fixed; z-index:999; left:10px; right:10px; bottom:calc(env(safe-area-inset-bottom) + 128px); background:rgba(255,255,255,.93);
           border-radius:10px; padding:6px 10px; font-size:13.5px; line-height:1.35; text-align:center; color:#222; font-variant-numeric:tabular-nums; }
   #mira b { color:var(--red); }
   #pMedir { position:fixed; z-index:1500; left:0; right:0; bottom:0; background:#fff; border-radius:14px 14px 0 0; display:none;
@@ -79,7 +86,7 @@
   .item .t { flex:1; font-size:14px; line-height:1.35; } .item .t b { font-size:16px; color:var(--navy); }
   .item button { height:40px; padding:0 12px; border-radius:10px; border:1px solid var(--line); background:#fff; color:var(--navy); font-weight:600; }
   .item button.borrar { color:var(--red); }
-  #aviso { position:fixed; z-index:3000; left:50%; transform:translateX(-50%); bottom:calc(env(safe-area-inset-bottom) + 132px); background:rgba(20,20,20,.9); color:#fff;
+  #aviso { position:fixed; z-index:3000; left:50%; transform:translateX(-50%); bottom:calc(env(safe-area-inset-bottom) + 176px); background:rgba(20,20,20,.9); color:#fff;
            padding:10px 14px; border-radius:12px; font-size:15px; display:none; max-width:90%; text-align:center; }
   /* rótulos delgados sobre el mapa */
   .rot { background:transparent; border:0; box-shadow:none; color:#fff; font-size:11px; font-weight:300; padding:0 0 0 4px;
@@ -101,20 +108,21 @@
 <div id="pMedir"><div id="medTxt">Toca el mapa o usa los botones para poner puntos de medición.</div>
   <div class="fila"><button id="bMedCruz" class="prim">＋ En la cruz</button><button id="bMedYo">＋ Mi posición</button><button id="bMedDeshacer">Deshacer</button></div>
   <div class="fila"><button id="bMedArea">Cerrar área</button><button id="bMedGuardar" class="prim">Guardar</button><button id="bMedFin">Salir</button></div></div>
+<div id="filtros"><select id="fMinero" aria-label="Filtrar por minero"></select><button data-v="puntos" class="on">Puntos</button><button data-v="lineas" class="on">Líneas</button><button data-v="areas" class="on">Áreas</button></div>
 <div id="barra">
   <button id="bCentrar"><b>◎</b>Mi posición</button>
   <button id="bPunto" class="prim"><b>＋</b>Punto</button>
+  <button id="bMedir"><b>📏</b>Medir</button>
   <button id="bLista"><b id="nPuntos">0</b>Guardado</button>
-  <button id="bExportar"><b>⇪</b>Exportar</button>
   <button id="bDatos"><b>⚙</b>Datos</button>
 </div>
 
 <div class="panel" id="pPunto">
-  <h2>Nuevo punto</h2>
+  <h2>Nuevo punto <span id="fNombre">P01</span></h2>
   <div class="seg" id="segOrigen"><button data-o="gps" class="on">Con el GPS</button><button data-o="mapa">En la cruz del mapa</button></div>
   <div class="caja" id="pPosicion" style="margin-top:10px">—</div>
-  <label for="fNombre">Nombre del punto</label><input id="fNombre" autocomplete="off">
   <label for="fUpm">UPM o minero</label><select id="fUpm"></select>
+  <label for="fCorto">Nombre corto</label><input id="fCorto" maxlength="30" autocomplete="off" placeholder="Opcional: frente norte, entable…">
   <label for="fNota">Nota</label><textarea id="fNota" placeholder="Qué se ve, frente, estado, foto de Timestamp…"></textarea>
   <div class="fila"><button id="bCancelar">Cancelar</button><button id="bGuardar" class="prim">Guardar</button></div>
   <div class="fila" id="filaProm"><button id="bPromedio">Promediar 10 s y guardar</button></div>
@@ -123,20 +131,20 @@
 
 <div class="panel" id="pTrazo"><h2 id="tTitulo">Guardar medición</h2>
   <div class="caja" id="tResumen">—</div>
-  <label for="tNombre">Nombre</label><input id="tNombre" autocomplete="off">
   <label for="tQue">¿Qué es?</label><select id="tQue"></select>
   <label for="tUpm">UPM o minero</label><select id="tUpm"></select>
+  <label for="tCorto">Nombre corto</label><input id="tCorto" maxlength="30" autocomplete="off" placeholder="Opcional: botadero, vía al frente…">
   <label for="tNota">Nota</label><textarea id="tNota" placeholder="Qué se midió, estado, foto de Timestamp…"></textarea>
   <div class="fila"><button id="bTCancelar">Cancelar</button><button id="bTGuardar" class="prim">Guardar</button></div>
 </div>
 
 <div class="panel" id="pLista"><h2>Lo guardado</h2>
-  <div class="seg" id="segVer"><button data-v="puntos" class="on">Puntos</button><button data-v="lineas" class="on">Líneas</button><button data-v="areas" class="on">Áreas</button></div>
-  <p class="nota">Toca Puntos, Líneas o Áreas para mostrarlos u ocultarlos en el mapa.</p>
+  <div class="fila"><button id="bExportar" class="prim">⇪ Exportar todo</button></div>
+  <p class="nota" id="listaFiltro"></p>
   <div id="lista"></div>
   <div class="fila"><button id="bCerrarLista">Cerrar</button></div></div>
 
-<div class="panel" id="pExportar"><h2>Exportar puntos</h2>
+<div class="panel" id="pExportar"><h2>Exportar lo tomado</h2>
   <p class="nota">Exporta al final de cada día. Trae tus puntos, líneas y áreas con las coordenadas geográficas y el Este y el Norte en CTM12 (Origen Nacional); las áreas en hectáreas.</p>
   <div class="fila"><button id="bZip" class="prim">Compartir todo (ZIP: CSV, KML y GeoJSON)</button></div>
   <div class="fila"><button id="bCsv">Compartir solo CSV</button><button id="bCopiar">Copiar como texto</button></div>
