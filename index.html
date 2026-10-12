@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Campo ZRP 753">
+<meta name="theme-color" content="#0B2F7C">
+<title>Campo ZRP 753</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="stylesheet" href="leaflet.css">
+<style>
+  :root { --navy:#0B2F7C; --gold:#F9B21A; --red:#C10617; --ink:#1d1d1f; --line:#d5dce8; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body { margin:0; height:100%; background:#111; font-family:-apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif; color:var(--ink); overscroll-behavior:none; }
+  #map { position:fixed; inset:0; background:#2b2f36; }
+  /* barra superior de coordenadas */
+  #gps { position:fixed; top:0; left:0; right:0; z-index:1000; padding:calc(env(safe-area-inset-top) + 6px) 12px 8px;
+         background:rgba(11,47,124,.92); color:#fff; text-align:center; }
+  #gps .en { font-size:22px; font-weight:700; letter-spacing:.3px; font-variant-numeric:tabular-nums; }
+  #gps .en span { color:var(--gold); font-weight:600; font-size:15px; margin:0 4px 0 10px; }
+  #gps .ll { font-size:13px; opacity:.92; margin-top:2px; font-variant-numeric:tabular-nums; }
+  #gps .acc { font-weight:700; padding:1px 6px; border-radius:8px; margin-left:4px; }
+  .ok { background:#1f8a3a; } .mid { background:#b77900; } .bad { background:#a3121e; }
+  /* selector de mapa */
+  #capas { position:fixed; z-index:1000; right:10px; top:calc(env(safe-area-inset-top) + 86px); display:flex; flex-direction:column; gap:6px; }
+  #capas button { min-width:84px; padding:8px 10px; border-radius:10px; border:1px solid rgba(255,255,255,.6); background:rgba(0,0,0,.55); color:#fff; font-size:14px; font-weight:600; }
+  #capas button.on { background:var(--gold); color:var(--navy); border-color:var(--gold); }
+  #fecha { position:fixed; z-index:999; left:10px; top:calc(env(safe-area-inset-top) + 86px); background:rgba(255,255,255,.88); color:#222; font-size:12px; padding:5px 8px; border-radius:8px; max-width:60%; }
+  /* barra inferior */
+  #barra { position:fixed; z-index:1000; left:0; right:0; bottom:0; display:flex; gap:8px; justify-content:space-between; align-items:center;
+           padding:10px 10px calc(env(safe-area-inset-bottom) + 10px); background:rgba(255,255,255,.95); border-top:1px solid var(--line); }
+  #barra button { flex:1; height:52px; border-radius:12px; border:1px solid var(--line); background:#fff; font-size:13px; font-weight:600; color:var(--navy); }
+  #barra button.prim { flex:1.4; background:var(--navy); color:#fff; border-color:var(--navy); font-size:15px; }
+  #barra button b { display:block; font-size:18px; line-height:20px; }
+  /* cruz del centro del mapa */
+  #cruz { position:fixed; z-index:998; left:50%; top:50%; width:34px; height:34px; margin:-17px 0 0 -17px; pointer-events:none; display:none; }
+  #cruz:before, #cruz:after { content:""; position:absolute; background:var(--red); box-shadow:0 0 0 1px #fff; }
+  #cruz:before { left:16px; top:0; width:2px; height:34px; } #cruz:after { top:16px; left:0; height:2px; width:34px; }
+  /* paneles */
+  .panel { position:fixed; z-index:2000; left:0; right:0; bottom:0; max-height:86vh; overflow:auto; background:#fff; border-radius:16px 16px 0 0;
+           padding:16px 16px calc(env(safe-area-inset-bottom) + 16px); box-shadow:0 -6px 24px rgba(0,0,0,.35); display:none; }
+  .panel.abierto { display:block; }
+  .panel h2 { margin:0 0 10px; font-size:19px; color:var(--navy); }
+  .panel label { display:block; font-size:13px; font-weight:600; color:#444; margin:12px 0 4px; }
+  .panel input, .panel select, .panel textarea { width:100%; font-size:17px; padding:10px; border:1px solid #c9cfda; border-radius:10px; background:#fff; color:var(--ink); }
+  .panel textarea { min-height:84px; }
+  .panel .fila { display:flex; gap:8px; margin-top:14px; }
+  .panel .fila button { flex:1; height:50px; border-radius:12px; font-size:16px; font-weight:600; border:1px solid var(--line); background:#fff; color:var(--navy); }
+  .panel .fila button.prim { background:var(--navy); color:#fff; border-color:var(--navy); }
+  .panel .fila button.peligro { color:var(--red); border-color:#e5b9bd; }
+  .caja { background:#f3f5fa; border-radius:10px; padding:10px 12px; font-size:15px; font-variant-numeric:tabular-nums; }
+  .caja b { color:var(--navy); }
+  .nota { font-size:13px; color:#555; margin-top:8px; line-height:1.35; }
+  .seg { display:flex; gap:6px; } .seg button { flex:1; height:42px; border-radius:10px; border:1px solid var(--line); background:#fff; font-size:15px; color:var(--navy); font-weight:600; }
+  .seg button.on { background:var(--navy); color:#fff; }
+  .item { border-bottom:1px solid #eee; padding:10px 0; display:flex; gap:10px; align-items:center; }
+  .item .t { flex:1; font-size:14px; line-height:1.35; } .item .t b { font-size:16px; color:var(--navy); }
+  .item button { height:40px; padding:0 12px; border-radius:10px; border:1px solid var(--line); background:#fff; color:var(--navy); font-weight:600; }
+  .item button.borrar { color:var(--red); }
+  #aviso { position:fixed; z-index:3000; left:50%; transform:translateX(-50%); bottom:calc(env(safe-area-inset-bottom) + 86px); background:rgba(20,20,20,.9); color:#fff;
+           padding:10px 14px; border-radius:12px; font-size:15px; display:none; max-width:90%; text-align:center; }
+  /* rótulos delgados sobre el mapa */
+  .rot { background:transparent; border:0; box-shadow:none; color:#fff; font-size:11px; font-weight:300; padding:0 0 0 4px;
+         text-shadow:0 0 2px #000, 0 0 2px #000, 0 0 3px #000; white-space:nowrap; }
+  .rot:before { display:none; }
+  .rotp { color:#ffe08a; font-weight:400; }
+  .leaflet-container { font-family:inherit; }
+  .yo { width:18px; height:18px; border-radius:50%; background:#1a73e8; border:3px solid #fff; box-shadow:0 0 0 2px rgba(26,115,232,.4); }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="gps"><div class="en" id="gpsEN">Buscando GPS…</div><div class="ll" id="gpsLL">Permite la ubicación cuando el iPhone lo pida</div></div>
+<div id="capas"></div>
+<div id="fecha" style="display:none"></div>
+<div id="cruz"></div>
+<div id="barra">
+  <button id="bCentrar"><b>◎</b>Mi posición</button>
+  <button id="bPunto" class="prim"><b>＋</b>Punto</button>
+  <button id="bLista"><b id="nPuntos">0</b>Puntos</button>
+  <button id="bExportar"><b>⇪</b>Exportar</button>
+  <button id="bDatos"><b>⚙</b>Datos</button>
+</div>
+
+<div class="panel" id="pPunto">
+  <h2>Nuevo punto</h2>
+  <div class="seg" id="segOrigen"><button data-o="gps" class="on">Con el GPS</button><button data-o="mapa">En la cruz del mapa</button></div>
+  <div class="caja" id="pPosicion" style="margin-top:10px">—</div>
+  <label for="fNombre">Nombre del punto</label><input id="fNombre" autocomplete="off">
+  <label for="fUpm">UPM o minero</label><select id="fUpm"></select>
+  <label for="fNota">Nota</label><textarea id="fNota" placeholder="Qué se ve, frente, estado, foto de Timestamp…"></textarea>
+  <div class="fila"><button id="bCancelar">Cancelar</button><button id="bGuardar" class="prim">Guardar</button></div>
+  <div class="fila" id="filaProm"><button id="bPromedio">Promediar 10 s y guardar</button></div>
+  <p class="nota">Promediar mejora la posición cuando la precisión es mala. Las fotos de evidencia se toman con Timestamp Camera; al regreso se enlazan a estos puntos por hora y ubicación.</p>
+</div>
+
+<div class="panel" id="pLista"><h2>Puntos tomados</h2><div id="lista"></div>
+  <div class="fila"><button id="bCerrarLista">Cerrar</button></div></div>
+
+<div class="panel" id="pExportar"><h2>Exportar puntos</h2>
+  <p class="nota">Exporta al final de cada día. El archivo trae las coordenadas geográficas y el Este y el Norte en CTM12 (Origen Nacional).</p>
+  <div class="fila"><button id="bZip" class="prim">Compartir todo (ZIP: CSV, KML y GeoJSON)</button></div>
+  <div class="fila"><button id="bCsv">Compartir solo CSV</button><button id="bCopiar">Copiar como texto</button></div>
+  <div class="fila"><button id="bCerrarExp">Cerrar</button></div></div>
+
+<div class="panel" id="pDatos"><h2>Datos del teléfono</h2>
+  <div class="caja" id="estadoDatos">—</div>
+  <label for="fZip">Cargar el paquete de mapas y puntos (.zip)</label>
+  <input type="file" id="fZip" accept=".zip,application/zip">
+  <div class="caja" id="progreso" style="display:none;margin-top:10px"></div>
+  <div class="fila"><button id="bCeldas">Mostrar celdas</button></div>
+  <div class="fila"><button id="bBorrarMapas" class="peligro">Borrar mapas</button><button id="bBorrarPuntos" class="peligro">Borrar puntos</button></div>
+  <div class="fila"><button id="bCerrarDatos">Cerrar</button></div>
+  <p class="nota">Los mapas, los nombres de los mineros y tus puntos quedan solo en este teléfono; no se suben a internet.</p></div>
+
+<div id="aviso"></div>
+<script src="leaflet.js"></script>
+<script src="proj4.js"></script>
+<script src="jszip.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
