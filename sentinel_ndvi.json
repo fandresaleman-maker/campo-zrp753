@@ -1,0 +1,12 @@
+{
+ "lon0": -74.78,
+ "lat1": 7.682,
+ "d": 9e-05,
+ "w": 922,
+ "h": 578,
+ "fecha2023": "2023-07-12",
+ "fecha2026": "2026-09-14",
+ "escena2023": "S2A_T18NWP_20230712T152907_L2A",
+ "escena2026": "S2C_T18NWP_20260914T152651_L2A",
+ "codigo": "rojo = NDVI 2023, verde = NDVI 2026; 0 = sin dato (nubes, sombra o bruma); NDVI = (valor - 1) / 254 × 1,2 - 0,2"
+}

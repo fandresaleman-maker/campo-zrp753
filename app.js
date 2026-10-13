@@ -486,6 +486,54 @@ function cambioSentinel(S, polys) {          // polys: listas de [lat, lon]; cue
   return { n, v, r: b26 > 0 ? ambos / b26 : null, ha26: b26 * celda, ha23: b23 * celda, haAmbos: ambos * celda, haSolo23: solo23 * celda, f23: S.meta.fecha2023, f26: S.meta.fecha2026 };
 }
 
+/* ---------------- método relativo: Google define la minería; Sentinel compara ese sitio en 2023 y 2026 ---------------- */
+let NDVI = null;
+async function cargarNDVI() {                // rojo = NDVI 2023, verde = NDVI 2026 (0 = sin dato)
+  if (NDVI) return NDVI;
+  const meta = await (await fetch('sentinel_ndvi.json')).json();
+  const img = new Image(); await new Promise((ok, mal) => { img.onload = ok; img.onerror = mal; img.src = 'sentinel_ndvi.png'; });
+  const cv = document.createElement('canvas'); cv.width = meta.w; cv.height = meta.h;
+  const g = cv.getContext('2d', { willReadFrequently: true }); g.drawImage(img, 0, 0);
+  const px = g.getImageData(0, 0, meta.w, meta.h).data, n = meta.w * meta.h, a = new Float32Array(n), b = new Float32Array(n);
+  for (let i = 0; i < n; i++) { const r = px[i * 4], v = px[i * 4 + 1]; a[i] = r ? (r - 1) / 254 * 1.2 - 0.2 : NaN; b[i] = v ? (v - 1) / 254 * 1.2 - 0.2 : NaN; }
+  NDVI = { meta, n23: a, n26: b }; return NDVI;
+}
+function relativoSentinel(S, polys) {
+  const { lon0, lat1, d, w, h } = S.meta, AN = 8;             // anillo de bosque de referencia: 8 píxeles (≈80 m) alrededor
+  let a0 = Infinity, a1 = -Infinity, b0 = Infinity, b1 = -Infinity;
+  polys.forEach(p => p.forEach(([la, lo]) => { a0 = Math.min(a0, lo); a1 = Math.max(a1, lo); b0 = Math.min(b0, la); b1 = Math.max(b1, la); }));
+  const x0 = Math.max(0, Math.floor((a0 - lon0) / d) - AN - 2), x1 = Math.min(w - 1, Math.ceil((a1 - lon0) / d) + AN + 2);
+  const y0 = Math.max(0, Math.floor((lat1 - b1) / d) - AN - 2), y1 = Math.min(h - 1, Math.ceil((lat1 - b0) / d) + AN + 2);
+  const W = x1 - x0 + 1, H = y1 - y0 + 1; if (W < 3 || H < 3) return { fuera: true };
+  const rings = polys.map(p => p.map(([la, lo]) => [lo, la])), M = new Uint8Array(W * H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++)
+    if (rings.some(r => dentro(lon0 + (x0 + x + 0.5) * d, lat1 - (y0 + y + 0.5) * d, r))) M[y * W + x] = 1;
+  let Dl = M.slice();
+  for (let k = 0; k < AN; k++) { const N = Dl.slice(); for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const i = y * W + x; if (!Dl[i] && ((x > 0 && Dl[i - 1]) || (x < W - 1 && Dl[i + 1]) || (y > 0 && Dl[i - W]) || (y < H - 1 && Dl[i + W]))) N[i] = 1; } Dl = N; }
+  const gi = (x, y) => (y0 + y) * w + (x0 + x), r23 = [], r26 = [];
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const i = y * W + x; if (Dl[i] && !M[i]) { const a = S.n23[gi(x, y)], b = S.n26[gi(x, y)]; if (!isNaN(a) && !isNaN(b)) { r23.push(a); r26.push(b); } } }
+  if (r23.length < 20) return { sinAnillo: true };
+  const p80 = arr => { const t = arr.slice().sort((p, q) => p - q), k = 0.8 * (t.length - 1), i = Math.floor(k); return t[i] + (t[Math.min(i + 1, t.length - 1)] - t[i]) * (k - i); };
+  const f23 = p80(r23), f26 = p80(r26);
+  const calc = (dx, dy, interior) => {         // la máscara corrida dx, dy píxeles simula un desfase entre Google y Sentinel
+    let num = 0, den = 0, n = 0, alt = 0;
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const xs = x - dx, ys = y - dy; if (xs < 0 || ys < 0 || xs >= W || ys >= H) continue;
+      const j = ys * W + xs; if (!M[j]) continue;
+      if (interior && !(xs > 0 && xs < W - 1 && ys > 0 && ys < H - 1 && M[j - 1] && M[j + 1] && M[j - W] && M[j + W])) continue;
+      const a = S.n23[gi(x, y)], b = S.n26[gi(x, y)]; if (isNaN(a) || isNaN(b)) continue;
+      n++; const d26 = Math.max(0, f26 - b), d23 = Math.max(0, f23 - a);
+      if (d26 > 0.05) { alt++; num += Math.min(d23, d26); den += d26; }
+    }
+    return { R: den > 0 ? num / den : null, n, alt };
+  };
+  const base = calc(0, 0, false), vals = [base.R];
+  [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, 1], [-1, 1], [1, -1]].forEach(([dx, dy]) => vals.push(calc(dx, dy, false).R));
+  vals.push(calc(0, 0, true).R);
+  const ok = vals.filter(v => v != null);
+  return { R: base.R, Rmin: ok.length ? Math.min(...ok) : null, Rmax: ok.length ? Math.max(...ok) : null, n: base.n, alt: base.alt, f23, f26, fecha23: S.meta.fecha2023, fecha26: S.meta.fecha2026 };
+}
+
 /* ---------------- calculadora de anterioridad ---------------- */
 const CAUDAL = { 2: 20, 3: 45, 4: 80, 6: 180, 8: 320 };   // m³/h de agua por motobomba según pulgadas: orden de magnitud
 const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
@@ -514,8 +562,8 @@ async function abrirCalc(trazo) {            // desde un área, o desde «Guarda
       : 'Escriba el área intervenida en hectáreas.';
   }
   $('bCGuardar').style.display = trazo ? '' : 'none';
-  CALC.sent = null; abrir('pCalc'); calcular();
-  if (polys.length) { try { CALC.sent = cambioSentinel(await cargarSentinel(), polys); } catch (e) { CALC.sent = { error: true }; } calcular(); }
+  CALC.sent = null; CALC.autoA1 = !$('cA1').value; $('cSent').style.display = 'none'; abrir('pCalc'); calcular();
+  if (polys.length) { try { CALC.sent = relativoSentinel(await cargarNDVI(), polys); } catch (e) { CALC.sent = { error: true }; } calcular(); }
 }
 function calcular() {
   const A = num('cArea') * 10000, h = num('cProf'), rel = num('cRel') || 15, dps = Math.min(7, num('cDias')), mpa = Math.min(11.9, num('cParAnual'));
@@ -541,26 +589,33 @@ function calcular() {
   }
   const lineas = [`Cálculo de anterioridad (estimado) · ${$('cOrigen').textContent}`, `Área ${dec(A / 10000, 2)} ha × profundidad ${dec(h, 1)} m = ${miles(V)} m³.`,
     `Equipos: ${dec(num('cBombas'), 1)} motobomba(s) de chorro de ${$('cPulg').value}" (${miles(num('cCaudal'))} m³/h, ${dec(rel, 0)} m³ de agua por m³), ${dec(num('cHoras'), 1)} h/día, ${dec(dps, 1)} días/semana, ${dec(mpa, 1)} meses parados al año; otras paradas: ${dec(num('cParPre'), 1)} meses antes y ${dec(num('cParPost'), 1)} después del corte.`];
-  const st = CALC && CALC.sent;
-  if (st && st.error) html += '<div class="caja calc"><b>Según Sentinel:</b> no se pudieron leer las máscaras.</div>';
-  else if (st && A > 0) {
-    const fm = f => { const [y, mo, dd] = f.split('-'); return `${+dd}-${MESES[+mo - 1]}-${y}`; };
-    if (st.n < 20 || st.v < 0.8 * st.n) html += `<div class="caja calc"><b>Según Sentinel:</b> el polígono es muy pequeño o tiene nubes (${st.n} píxeles de 10 m); use la alta resolución y lo visto en campo.</div>`;
-    else if (!st.r) html += `<div class="caja calc"><b>Según Sentinel:</b> no ve intervención dentro de los polígonos (frentes pequeños o lineales, o bajo cobertura); use la alta resolución y lo visto en campo.</div>`;
+  const st = CALC && CALC.sent, cs = $('cSent');
+  if (st) {
+    const fm = f => { const [y, mo, dd] = f.split('-'); return `${+dd}-${MESES[+mo - 1]}-${y}`; }, ha = m2 => dec(m2 / 10000, 2), celda = 0.00988;
+    let t = `<b>Calculado automáticamente con Sentinel</b>${st.fecha23 ? ` (${fm(st.fecha23)} frente a ${fm(st.fecha26)})` : ''}<br><span class="nota">Lo que es minería lo define tu trazo en Google; Sentinel solo compara ese mismo sitio en las dos fechas contra el bosque de alrededor.</span><br>`;
+    if (st.error) t += 'No se pudieron leer las imágenes de Sentinel.';
+    else if (st.fuera) t += 'El área está fuera de la zona con datos de Sentinel.';
+    else if (st.sinAnillo) t += 'No hay bosque alrededor para tomar como referencia (nubes o borde de la zona).';
+    else if (!(A > 0)) t += 'Falta el área de hoy.';
+    else if (st.R == null || st.alt < 15) t += `Dentro del área, Sentinel ve alterados en 2026 solo ${st.alt} de ${st.n} píxeles de 10 m: frente muy angosto o pequeño para Sentinel. No es concluyente; use la alta resolución y lo visto en campo.`;
     else {
-      const k = (A / 10000) / st.ha26, a1s = st.haAmbos * k * 10000;      // corrección Google 2026 ÷ Sentinel 2026 en el mismo polígono
-      const avisoK = k > 2.5 || k < 0.6 ? '<br><b class="no">Corrección grande:</b> Sentinel no distingue bien estos frentes; tómelo con cautela y apóyelo en la alta resolución.' : '';
-      html += `<div class="caja calc"><b>Según Sentinel (mismo sensor, ${fm(st.f23)} frente a ${fm(st.f26)}):</b><br>` +
-        `Corrección: Google 2026 ${dec(A / 10000, 2)} ha ÷ Sentinel 2026 ${dec(st.ha26, 2)} ha = <b>k ${dec(k, 2)}</b>.<br>` +
-        `Intervenido en las dos fechas según Sentinel: ${dec(st.haAmbos, 2)} ha × k = <b>${dec(a1s / 10000, 2)} ha (${Math.round(a1s / A * 100)} %) ya intervenidas en julio de 2023</b> → anteriores al corte por evidencia satelital.<br>` +
-        `Sentinel veía ${dec(st.ha23, 2)} ha en 2023 dentro de los polígonos` + (st.haSolo23 > 0.05 ? `; ${dec(st.haSolo23, 2)} ha de entonces hoy están revegetadas (también anteriores, si son del responsable).` : '.') + avisoK +
-        `<br><button id="bUsarSent" class="mini">Usar ${dec(a1s / 10000, 2)} ha como área antes del corte</button></div>`;
-      lineas.push(`Según Sentinel (${st.f23} frente a ${st.f26}, mismo sensor): corrección k = Google 2026 ${dec(A / 10000, 2)} ha ÷ Sentinel 2026 ${dec(st.ha26, 2)} ha = ${dec(k, 2)}; intervenido en ambas fechas ${dec(st.haAmbos, 2)} ha × k = ${dec(a1s / 10000, 2)} ha (${Math.round(a1s / A * 100)} %) anteriores al corte.` + (st.haSolo23 > 0.05 ? ` Revegetadas desde 2023: ${dec(st.haSolo23, 2)} ha.` : ''));
-      CALC.a1sent = a1s;
+      const a1s = A * st.R, rmin = st.Rmin, rmax = st.Rmax;
+      t += `<table class="tsent"><tr><td>Área en Google 2026 (lo trazado)</td><td><b>${ha(A)} ha</b></td></tr>` +
+        `<tr><td>Píxeles de 10 m dentro · alterados en 2026</td><td>${st.n} · ${st.alt} (${Math.round(st.alt / st.n * 100)} %)</td></tr>` +
+        `<tr><td>Sentinel distingue alterado en 2026</td><td>${dec(st.alt * celda, 2)} ha</td></tr>` +
+        `<tr><td>Bosque de referencia (NDVI) 2023 · 2026</td><td>${dec(st.f23, 2)} · ${dec(st.f26, 2)}</td></tr>` +
+        `<tr><td>Ya alterado en jul-2023</td><td><b class="si">${Math.round(st.R * 100)} % → ${ha(a1s)} ha</b></td></tr>` +
+        `<tr><td>Margen (desfase de 10 m y bordes)</td><td>${Math.round(rmin * 100)}–${Math.round(rmax * 100)} % → ${ha(A * rmin)}–${ha(A * rmax)} ha</td></tr>` +
+        `<tr><td>Nuevo después de jul-2023</td><td>${ha(A - a1s)} ha</td></tr></table>` +
+        (rmax - rmin > 0.2 ? '<b class="no">Margen amplio:</b> área pequeña o angosta para Sentinel; tómelo con cautela.<br>' : '') +
+        (Math.abs(st.f23 - st.f26) > 0.05 ? '<b class="no">El bosque de referencia cambió entre fechas:</b> tómelo con cautela.' : '');
+      lineas.push(`Calculado con Sentinel (${st.fecha23} frente a ${st.fecha26}, método relativo al bosque de alrededor): de ${ha(A)} ha trazadas en Google, ${st.alt} de ${st.n} píxeles de 10 m se ven alterados en 2026; ${Math.round(st.R * 100)} % de esa alteración ya estaba en julio de 2023 → ${ha(a1s)} ha anteriores al corte (margen ${Math.round(rmin * 100)}–${Math.round(rmax * 100)} %, ${ha(A * rmin)}–${ha(A * rmax)} ha).`);
+      if (CALC.autoA1) { $('cA1').value = (a1s / 10000).toFixed(2); $('cImg').value = '2023-07-12'; }
     }
+    cs.innerHTML = t; cs.style.display = '';
   }
   // evidencia en imágenes: lo que ya estaba antes del corte es directo; lo nuevo da un ritmo mínimo
-  const A1 = num('cA1') * 10000;
+  const A1 = num('cA1') * 10000, autoA1 = CALC && CALC.autoA1 && A1 > 0;
   if (A1 > 0 && A > 0) {
     const fImg = new Date($('cImg').value + 'T00:00'), anos = Math.max(0.1, (visita - fImg) / DIA / 365.25), nomImg = fImg.getFullYear() === 2021 ? '20-ene-2021' : '12-jul-2023';
     const directa = Math.min(A1, A), nueva = Math.max(0, A - A1), ritmoM2 = nueva / anos, ritmoM3 = ritmoM2 * h;
@@ -572,7 +627,7 @@ function calcular() {
     else alerta = capacidad > 0 ? '<b class="si">Coherente con sus equipos.</b>' : '';
     let inicioImg = ritmoM2 > 0 && nueva >= 0.10 * A ? new Date(fImg - directa / ritmoM2 * 365.25 * DIA) : null;
     if (inicioImg && inicioImg.getFullYear() < 1990) inicioImg = null;   // un ritmo muy bajo no permite estimar el inicio
-    html += `<div class="caja calc"><b>Según imágenes (evidenciado):</b><br>Anterior al corte por evidencia directa: <b>${dec(directa / 10000, 2)} ha (${Math.round(directa / A * 100)} %)</b>, imagen del ${nomImg}.<br>` +
+    html += `<div class="caja calc"><b>Según imágenes (evidenciado${autoA1 ? ', con el área antes del corte calculada con Sentinel' : ''}):</b><br>Anterior al corte por evidencia directa: <b>${dec(directa / 10000, 2)} ha (${Math.round(directa / A * 100)} %)</b>, imagen del ${nomImg}.<br>` +
       `Área nueva desde esa imagen: ${dec(nueva / 10000, 2)} ha en ${dec(anos, 1)} años → ritmo <b>mínimo</b> de ${miles(ritmoM3)} m³/año (no ve profundización ni relleno).<br>` +
       (inicioImg ? `Inicio orientativo con ese ritmo: ${fmes(inicioImg)}.<br>` : 'Inicio orientativo: no se estima, el área casi no creció.<br>') + alerta + `</div>`;
     lineas.push(`Según imágenes (evidenciado): ${dec(directa / 10000, 2)} ha (${Math.round(directa / A * 100)} %) anteriores al corte por evidencia directa (imagen del ${nomImg}); área nueva ${dec(nueva / 10000, 2)} ha en ${dec(anos, 1)} años, ritmo mínimo ${miles(ritmoM3)} m³/año` + (inicioImg ? `; inicio orientativo ${fmes(inicioImg)}.` : '.'));
@@ -593,7 +648,7 @@ function calcular() {
   if (lineaInicio) lineas.splice(3, 0, lineaInicio);
   lineas.splice(1, 0, 'Fuentes: área y corte, evidenciados (en campo o mediante imagen); equipos, régimen, paradas, inicio y producción, manifestados salvo que se hayan visto; inicio estimado y áreas máximas, calculados por la ANM.');
   $('cRes').innerHTML = html; RESUMEN = lineas.join('\n');
-  const bu = $('bUsarSent'); if (bu) bu.onclick = () => { $('cA1').value = (CALC.a1sent / 10000).toFixed(2); $('cImg').value = '2023-07-12'; calcular(); };
+
 }
 async function calcGuardar() {
   const t = CALC && CALC.trazo; if (!t) return;
@@ -727,7 +782,7 @@ $('filtros').onclick = e => { const v = e.target.dataset.v; if (v) alternarVer(v
 $('fMinero').onchange = async e => { FILTRO = e.target.value; await pintarMios(); await pintarTrazos(); };
 $('fUpm').onchange = e => otroMinero(e.target); $('tUpm').onchange = e => otroMinero(e.target); $('eUpm').onchange = e => otroMinero(e.target);
 $('bCalc').onclick = () => abrirCalc(null);
-$('pCalc').addEventListener('input', calcular);
+$('pCalc').addEventListener('input', e => { if (e.target.id === 'cA1') CALC.autoA1 = false; calcular(); });
 $('cPulg').onchange = () => { $('cCaudal').value = CAUDAL[$('cPulg').value] || ''; calcular(); };
 $('bCCopiar').onclick = calcCopiar; $('bCGuardar').onclick = calcGuardar;
 $('bCCerrar').onclick = async () => { await metaSet('calcUltimo', paramsCalc()); abrir(null); };
