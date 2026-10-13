@@ -87,6 +87,9 @@
   .parada input.causa { grid-column:1 / 3; } .parada button { grid-row:1 / 3; grid-column:3; border:1px solid #e5b9bd; color:var(--red); background:#fff; border-radius:10px; font-size:18px; }
   #pVeg { position:fixed; z-index:1700; left:0; right:0; bottom:0; background:#fff; border-radius:14px 14px 0 0; display:none; padding:12px 12px calc(env(safe-area-inset-bottom) + 10px); box-shadow:0 -4px 18px rgba(0,0,0,.35); font-size:15px; line-height:1.4; }
   #pVeg.abierto { display:block; } #pVeg .fila { display:flex; gap:8px; margin-top:10px; } #pVeg .fila button { flex:1; height:46px; border-radius:10px; border:1px solid var(--line); background:#fff; color:var(--navy); font-size:15px; font-weight:600; } #pVeg .fila button.prim { background:var(--navy); color:#fff; }
+  .gbtn { display:block; width:100%; height:42px; margin-top:8px; border-radius:10px; border:1px solid var(--navy); background:#fff; color:var(--navy); font-size:14.5px; font-weight:600; }
+  .gbtn.prim { background:var(--navy); color:#fff; }
+  #pCalc input:disabled, #pCalc select:disabled { background:#e9edf4; color:#1d1d1f; -webkit-text-fill-color:#1d1d1f; opacity:1; }
   .lmin { margin-top:6px; padding-top:6px; border-top:1px solid #e3e7ef; font-size:13px; color:#333; }
   .tsent { width:100%; border-collapse:collapse; margin:6px 0; font-size:14px; } .tsent td { padding:3px 0; border-bottom:1px solid #e3e7ef; } .tsent td:last-child { text-align:right; white-space:nowrap; padding-left:8px; }
   .caja button.mini { margin-top:6px; padding:6px 10px; border-radius:8px; border:1px solid var(--navy); background:#fff; color:var(--navy); font-weight:600; font-size:13px; } .caja .si { color:#1f7a34; } .caja .no { color:var(--red); }
@@ -231,16 +234,21 @@
     <label>Semanas paradas cada año por clima <small>lluvias, crecientes, verano sin agua</small><input id="cSemClima" inputmode="decimal"></label>
     <label class="ancho">Producción que dice (m³/día)<input id="cManif" inputmode="decimal" placeholder="solo si da una cifra"></label>
   </div>
+  <button class="gbtn" id="bGeq">Guardar equipos</button>
   <div class="caja" style="margin-top:10px"><b>Paradas puntuales</b> <span class="nota">las que él cuente: paro, operativo, daño, combustible…</span>
-    <div id="cParadas"></div><button id="bCParada" class="mini">＋ Agregar parada</button></div>
+    <div id="cParadas"></div><button id="bCParada" class="mini">＋ Agregar parada</button>
+    <button class="gbtn" id="bGpar">Guardar paradas</button></div>
   <div class="grid2">
     <label>Inicio calculado (mes y año)<input id="cInicioCalc" readonly tabindex="-1"></label>
     <label>Inicio manifestado (mes y año)<input id="cInicio" type="month"></label>
+  </div>
+  <button class="gbtn" id="bGini">Guardar inicio manifestado</button>
+  <div class="grid2">
     <label>Fecha de corte<input id="cCorte" type="date"></label>
     <label>Fecha de la visita<input id="cVisita" type="date"></label>
   </div>
   <div id="cRes"></div>
-  <div class="fila"><button id="bCCopiar">Copiar resumen</button><button id="bCGuardar" class="prim">Guardar</button></div>
+  <div class="fila"><button id="bCCopiar">Copiar resumen</button><button id="bCGuardar" class="prim">Guardar todo</button></div>
   <div class="fila"><button id="bCCerrar">Cerrar</button></div>
   <p class="nota">Las áreas no se editan: la de hoy sale del trazo y la de julio de 2023 la calcula Sentinel con el límite bajo del margen («al menos»). Para cambiarlas, corrija el trazo.<br>
   Motobombas: pregunte «En promedio, ¿cuántas motobombas tuvo trabajando a la vez, sumando todos sus frentes, desde que empezó?». Si a veces 1 y a veces 3, anote 2. No sume la de succión, que mueve la misma agua.<br>

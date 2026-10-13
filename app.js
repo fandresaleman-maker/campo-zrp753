@@ -777,13 +777,38 @@ function difTxt(dice, calc) {                // cuánto antes o después del cal
   const t = Math.abs(m) >= 24 ? `${dec(Math.abs(m) / 12, 1)} años` : `${Math.abs(m)} mes${Math.abs(m) === 1 ? '' : 'es'}`;
   return m > 0 ? `${t} antes que el calculado` : `${t} después del calculado`;
 }
-async function equiposDe(upm) {              // equipos anotados del minero, o los predeterminados
-  const e = ((await metaGet('equipos')) || {})[upm], corte = ((await metaGet('calcUltimo')) || {}).cCorte;
-  return { ...EQ_BASE, ...(corte ? { cCorte: corte } : {}), cVisita: hoyISO(), ...(e || {}), guardado: !!e };
+// datos del minero en tres partes que se guardan por separado: equipos, paradas puntuales e inicio manifestado
+const PARTES = { eq: { ids: ['cBombas', 'cBombasHoy', 'cPulg', 'cCaudal', 'cRel', 'cHoras', 'cDias', 'cSemClima', 'cManif'], nombre: 'equipos' },
+                 par: { ids: [], nombre: 'paradas' }, ini: { ids: ['cInicio'], nombre: 'inicio manifestado' } };
+const fechasDe = e => { if (!e) return { eq: null, par: null, ini: null }; const una = !e.guardado_eq && !e.guardado_par && !e.guardado_ini ? e.fecha : null;   // antes de la v19 se guardaba todo de una vez
+  return { eq: e.guardado_eq || una, par: e.guardado_par || una, ini: e.guardado_ini || una }; };
+async function equiposDe(upm) {              // datos anotados del minero, o los predeterminados
+  const e = ((await metaGet('equipos')) || {})[upm], corte = ((await metaGet('calcUltimo')) || {}).cCorte, partes = fechasDe(e);
+  return { ...EQ_BASE, ...(corte ? { cCorte: corte } : {}), cVisita: hoyISO(), ...(e || {}), guardado: !!partes.eq, partes };
 }
-async function equiposGuardar(upm, eq) {
-  const todos = (await metaGet('equipos')) || {}; const { guardado, ...v } = eq;
-  todos[upm] = { ...v, fecha: fechaLocal(new Date()) }; await metaSet('equipos', todos);
+async function equiposGuardar(upm, eq, cuales = ['eq', 'par', 'ini']) {   // guarda solo las partes pedidas; las demás quedan como estaban
+  const todos = (await metaGet('equipos')) || {}, prev = todos[upm] || {}, f = fechaLocal(new Date()), antes = fechasDe(todos[upm]);
+  const nuevo = { ...prev, guardado_eq: antes.eq, guardado_par: antes.par, guardado_ini: antes.ini, cCorte: eq.cCorte, cVisita: eq.cVisita, fecha: f };
+  cuales.forEach(k => { PARTES[k].ids.forEach(id => { nuevo[id] = eq[id]; }); if (k === 'par') nuevo.paradas = eq.paradas; nuevo['guardado_' + k] = f; });
+  todos[upm] = nuevo; await metaSet('equipos', todos);
+  return nuevo;
+}
+function bloquearParte(k, on) {              // lo ya anotado queda precargado y fijo; «Editar» lo abre para corregirlo
+  CALC.bloq[k] = on;
+  if (k === 'par') { $('cParadas').querySelectorAll('input').forEach(i => { i.disabled = on; }); $('cParadas').querySelectorAll('button').forEach(b => { b.style.display = on ? 'none' : ''; }); $('bCParada').style.display = on ? 'none' : ''; }
+  else PARTES[k].ids.forEach(id => { $(id).disabled = on; });
+  const b = $('bG' + k), quien = CALC.upm.split(' ')[0];
+  b.textContent = on ? `✎ Editar ${PARTES[k].nombre}` : `Guardar ${PARTES[k].nombre} de ${quien}`; b.classList.toggle('prim', !on);
+}
+function notaEquipos() {
+  const p = CALC.eq.partes, d = x => x ? x.slice(0, 10) : 'sin anotar';
+  $('cEqNota').textContent = p.eq || p.par || p.ini ? `Equipos: ${d(p.eq)} · paradas: ${d(p.par)} · inicio: ${d(p.ini)}. Lo anotado viene precargado en todos sus frentes; para cambiarlo, toque «✎ Editar» y vuelva a guardar.`
+    : 'Valen para todos sus frentes, activos e inactivos. Se anotan una vez y quedan precargados.';
+}
+async function guardarParte(k) {
+  if (CALC.bloq[k]) { bloquearParte(k, false); return; }   // estaba fijo: lo abre para editar
+  const g = await equiposGuardar(CALC.upm, eqForm(), [k]); CALC.eq.partes = fechasDe(g); CALC.eq.guardado = !!CALC.eq.partes.eq;
+  bloquearParte(k, true); notaEquipos(); calcular(); avisar(`Guardado: ${PARTES[k].nombre} de ${CALC.upm}`);
 }
 const trazoGet = id => tx('trazos', 'readonly', s => s.get(id));
 async function sentDe(t) {                   // Sentinel del frente; se recalcula solo si cambia el trazo
@@ -864,10 +889,10 @@ function htmlMinero(upm, R, eq, corto) {     // resumen del minero: una línea (
 async function abrirCalc(trazo) {            // desde un frente, o desde «Guardado» para todos los frentes del minero filtrado
   if (!trazo && FILTRO === TODOS) { avisar('Elija primero un minero en la barra de abajo'); return; }
   const upm = trazo ? trazo.upm : FILTRO, eq = await equiposDe(upm);
-  CALC = { trazo: trazo || null, upm, eq, frs: null };
+  CALC = { trazo: trazo || null, upm, eq, frs: null, bloq: {} };
   EQUIPO.forEach(id => { $(id).value = eq[id] ?? ''; }); pintarParadas(eq.paradas || []);
-  $('cTitMin').textContent = `Equipos de ${upm}`;
-  $('cEqNota').textContent = eq.guardado ? `Ya anotados el ${String(eq.fecha || '').slice(0, 10)}: vienen precargados para todos sus frentes. Corrobórelos con él y corrija lo que cambie.` : 'Valen para todos sus frentes, activos e inactivos. Se anotan una vez y quedan precargados.'; $('cFrente').style.display = trazo ? '' : 'none';
+  $('cTitMin').textContent = `Datos de ${upm}`; notaEquipos();
+  ['eq', 'par', 'ini'].forEach(k => bloquearParte(k, !!eq.partes[k])); $('cFrente').style.display = trazo ? '' : 'none';
   $('cSent').style.display = 'none'; $('cResFrente').innerHTML = ''; $('cInicioCalc').value = '…';
   $('cRes').innerHTML = '<p class="nota">Calculando con Sentinel…</p>';
   if (trazo) {
@@ -954,7 +979,8 @@ function calcular() {
 }
 async function calcGuardar() {               // guarda los equipos del minero y, si viene de un frente, su profundidad y resultado
   if (!CALC || !CALC.R) return;
-  const eq = eqForm(), tr = CALC.trazo; await equiposGuardar(CALC.upm, eq); CALC.eq.guardado = true;
+  const eq = eqForm(), tr = CALC.trazo, g = await equiposGuardar(CALC.upm, eq); CALC.eq.partes = fechasDe(g); CALC.eq.guardado = true;
+  ['eq', 'par', 'ini'].forEach(k => bloquearParte(k, true)); notaEquipos();
   await metaSet('calcUltimo', { cCorte: eq.cCorte });
   let msg = `Equipos de ${CALC.upm} guardados`;
   if (tr) {
@@ -1171,6 +1197,7 @@ document.querySelectorAll('.seg.opc').forEach(g => g.addEventListener('click', e
   segPoner(g.id, v); frRefrescar(g.id[0]); }));
 $('cPulg').onchange = () => { $('cCaudal').value = CAUDAL[$('cPulg').value] || ''; calcular(); };
 $('bCCopiar').onclick = calcCopiar; $('bCGuardar').onclick = calcGuardar;
+['eq', 'par', 'ini'].forEach(k => { $('bG' + k).onclick = () => guardarParte(k); });
 $('bCCerrar').onclick = () => abrir(null);
 $('bECancelar').onclick = () => { if (EDIT && EDIT.desdeMapa) abrir(null); else abrirLista(); }; $('bEGuardar').onclick = guardarEdicion;
 $('bPunto').onclick = abrirNuevoPunto;
