@@ -72,6 +72,11 @@
   .ficha { font-size:14px; line-height:1.4; color:#222; font-variant-numeric:tabular-nums; }
   .ficha b { color:var(--navy); font-size:15px; }
   .ficha i { color:#444; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:2px 10px; }
+  .grid2 label { margin:8px 0 0; font-size:12px; line-height:1.25; }
+  .grid2 input, .grid2 select { margin-top:3px; padding:8px; font-size:16px; }
+  .caja.calc { margin-top:8px; line-height:1.45; }
+  .caja button.mini { margin-top:6px; padding:6px 10px; border-radius:8px; border:1px solid var(--navy); background:#fff; color:var(--navy); font-weight:600; font-size:13px; } .caja .si { color:#1f7a34; } .caja .no { color:var(--red); }
   .ficha button { margin-top:8px; width:100%; height:40px; border-radius:10px; border:1px solid var(--navy); background:var(--navy); color:#fff; font-size:15px; font-weight:600; }
   /* paneles */
   .panel { position:fixed; z-index:2000; left:0; right:0; bottom:0; max-height:86vh; overflow:auto; background:#fff; border-radius:16px 16px 0 0;
@@ -141,6 +146,7 @@
 <div class="panel" id="pTrazo"><h2 id="tTitulo">Guardar medición</h2>
   <div class="caja" id="tResumen">—</div>
   <label for="tQue">¿Qué es?</label><select id="tQue"></select>
+  <label for="tMed">Cómo se midió</label><select id="tMed"><option>En campo (recorrida)</option><option>Sobre la imagen (no visitada)</option></select>
   <label for="tUpm">UPM o minero</label><select id="tUpm"></select>
   <label for="tCorto">Nombre corto</label><input id="tCorto" maxlength="30" autocomplete="off" placeholder="Opcional: botadero, vía al frente…">
   <label for="tNota">Nota</label><textarea id="tNota" placeholder="Qué se midió, estado, foto de Timestamp…"></textarea>
@@ -151,14 +157,42 @@
   <div class="caja" id="eResumen">—</div>
   <label for="eCorto">Nombre corto</label><input id="eCorto" maxlength="30" autocomplete="off" placeholder="Opcional">
   <div id="eQueFila"><label for="eQue">¿Qué es?</label><select id="eQue"></select></div>
+  <div id="eMedFila"><label for="eMed">Cómo se midió</label><select id="eMed"></select></div>
   <label for="eUpm">UPM o minero</label><select id="eUpm"></select>
   <label for="eNota">Nota</label><textarea id="eNota"></textarea>
   <div class="fila"><button id="bECancelar">Cancelar</button><button id="bEGuardar" class="prim">Guardar cambios</button></div>
   <p class="nota">El consecutivo, la ubicación y las medidas no se editan.</p>
 </div>
 
+<div class="panel" id="pCalc"><h2>Calculadora de anterioridad</h2>
+  <div class="caja" id="cOrigen">—</div>
+  <div class="grid2">
+    <label>Área intervenida hoy (ha)<input id="cArea" inputmode="decimal"></label>
+    <label>Profundidad media (m)<input id="cProf" inputmode="decimal"></label>
+    <label>Motobombas de chorro<input id="cBombas" inputmode="decimal"></label>
+    <label>Pulgadas<select id="cPulg"><option>2</option><option>3</option><option>4</option><option>6</option><option>8</option></select></label>
+    <label>Caudal por bomba (m³/h)<input id="cCaudal" inputmode="decimal"></label>
+    <label>m³ de agua por m³ de grava<input id="cRel" inputmode="decimal"></label>
+    <label>Horas de bombeo al día<input id="cHoras" inputmode="decimal"></label>
+    <label>Días por semana<input id="cDias" inputmode="decimal"></label>
+    <label>Meses parados al año<input id="cParAnual" inputmode="decimal"></label>
+    <label>Manifestado (m³/día)<input id="cManif" inputmode="decimal" placeholder="opcional"></label>
+    <label>Inicio manifestado (mes y año)<input id="cInicio" type="month"></label>
+    <label>Área ya intervenida antes del corte (ha)<input id="cA1" inputmode="decimal" placeholder="medida en la imagen"></label>
+    <label>Imagen usada<select id="cImg"><option value="2021-01-20">Ene 2021</option><option value="2023-07-12">Jul 2023</option></select></label>
+    <label>Otras paradas antes del corte (meses)<input id="cParPre" inputmode="decimal"></label>
+    <label>Otras paradas después del corte (meses)<input id="cParPost" inputmode="decimal"></label>
+    <label>Fecha de corte<input id="cCorte" type="date"></label>
+    <label>Fecha de la visita<input id="cVisita" type="date"></label>
+  </div>
+  <div id="cRes"></div>
+  <div class="fila"><button id="bCCopiar">Copiar resumen</button><button id="bCGuardar" class="prim">Guardar en el área</button></div>
+  <div class="fila"><button id="bCCerrar">Cerrar</button></div>
+  <p class="nota">Estimación de orden de magnitud con lo medido y lo manifestado. El caudal por pulgadas es aproximado: cámbielo si conoce el de la bomba. No sume la motobomba de succión, que mueve la misma agua. Use promedios de todo el tiempo de operación.</p>
+</div>
+
 <div class="panel" id="pLista"><h2>Lo guardado</h2>
-  <div class="fila"><button id="bExportar" class="prim">⇪ Exportar todo</button></div>
+  <div class="fila"><button id="bExportar" class="prim">⇪ Exportar todo</button><button id="bCalc">🧮 Anterioridad</button></div>
   <p class="nota" id="listaFiltro"></p>
   <div id="lista"></div>
   <div class="fila"><button id="bCerrarLista">Cerrar</button></div></div>
