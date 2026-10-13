@@ -87,6 +87,12 @@
   .parada input.causa { grid-column:1 / 3; } .parada button { grid-row:1 / 3; grid-column:3; border:1px solid #e5b9bd; color:var(--red); background:#fff; border-radius:10px; font-size:18px; }
   #pVeg { position:fixed; z-index:1700; left:0; right:0; bottom:0; background:#fff; border-radius:14px 14px 0 0; display:none; padding:12px 12px calc(env(safe-area-inset-bottom) + 10px); box-shadow:0 -4px 18px rgba(0,0,0,.35); font-size:15px; line-height:1.4; }
   #pVeg.abierto { display:block; } #pVeg .fila { display:flex; gap:8px; margin-top:10px; } #pVeg .fila button { flex:1; height:46px; border-radius:10px; border:1px solid var(--line); background:#fff; color:var(--navy); font-size:15px; font-weight:600; } #pVeg .fila button.prim { background:var(--navy); color:#fff; }
+  .hist { display:grid; grid-template-columns:minmax(0, 1.2fr) minmax(0, 1fr) 40px; gap:6px; margin-top:8px; padding-top:8px; border-top:1px solid #e3e7ef; align-items:center; }
+  .hist .et { font-weight:600; color:var(--navy); font-size:14px; } .hist input, .hist select { width:100%; font-size:16px; padding:8px; border:1px solid #c9cfda; border-radius:10px; background:#fff; color:var(--ink); }
+  .hist button { grid-row:1 / 3; grid-column:3; height:100%; border:1px solid #e5b9bd; color:var(--red); background:#fff; border-radius:10px; font-size:18px; }
+  .u { position:relative; display:block; min-width:0; } .u::after { content:attr(data-u); position:absolute; right:10px; top:50%; transform:translateY(-50%); color:#5b6475; font-size:13px; pointer-events:none; }   /* unidad dentro de la casilla, al lado del número */
+  .u input { text-align:right; }   /* el número queda pegado a su unidad: «5 semanas» */
+  .hist .u input { padding-right:84px; } .hist .u[data-u="m³/h"] input { padding-right:46px; } .parada .u input { padding-right:66px; }
   .gbtn { display:block; width:100%; height:42px; margin-top:8px; border-radius:10px; border:1px solid var(--navy); background:#fff; color:var(--navy); font-size:14.5px; font-weight:600; }
   .gbtn.prim { background:var(--navy); color:#fff; }
   #pCalc input:disabled, #pCalc select:disabled { background:#e9edf4; color:#1d1d1f; -webkit-text-fill-color:#1d1d1f; opacity:1; }
@@ -223,11 +229,9 @@
   </div>
   <h3 class="sec" id="cTitMin">Equipos del minero</h3>
   <p class="nota" style="margin-top:0" id="cEqNota">Valen para todos sus frentes, activos e inactivos.</p>
+  <div class="caja" style="margin-top:6px"><b>Motobombas a la vez</b> <span class="nota">sumando todos sus frentes. Cada fila: desde cuándo · cuántas · pulgadas · caudal por bomba (m³/h). La última sigue hasta hoy.</span>
+    <div id="cHist"></div><button id="bCHist" class="mini">＋ Agregar cambio de equipos</button></div>
   <div class="grid2">
-    <label>Motobombas a la vez, en promedio desde que empezó<input id="cBombas" inputmode="decimal"></label>
-    <label>Motobombas trabajando hoy<input id="cBombasHoy" inputmode="decimal"></label>
-    <label>Pulgadas<select id="cPulg"><option>2</option><option>3</option><option>4</option><option>6</option><option>8</option></select></label>
-    <label>Caudal por bomba (m³/h)<input id="cCaudal" inputmode="decimal"></label>
     <label>m³ de agua por m³ de grava<input id="cRel" inputmode="decimal"></label>
     <label>Horas de bombeo al día<input id="cHoras" inputmode="decimal"></label>
     <label>Días por semana<input id="cDias" inputmode="decimal"></label>
@@ -251,7 +255,7 @@
   <div class="fila"><button id="bCCopiar">Copiar resumen</button><button id="bCGuardar" class="prim">Guardar todo</button></div>
   <div class="fila"><button id="bCCerrar">Cerrar</button></div>
   <p class="nota">Las áreas no se editan: la de hoy sale del trazo y la de julio de 2023 la calcula Sentinel con el límite bajo del margen («al menos»). Para cambiarlas, corrija el trazo.<br>
-  Motobombas: pregunte «En promedio, ¿cuántas motobombas tuvo trabajando a la vez, sumando todos sus frentes, desde que empezó?». Si a veces 1 y a veces 3, anote 2. No sume la de succión, que mueve la misma agua.<br>
+  Motobombas: pregunte con cuántas empezó y cuándo cambió, sumando todos sus frentes. La primera fila corre desde el inicio que él diga; pregúntele el inicio al final, sin mostrarle la pantalla. No sume la de succión, que mueve la misma agua.<br>
   Paradas: solo las que él diga. Las de clima, en semanas de cada año; las puntuales, con su fecha, sus semanas y su causa. Si no dice, 0: suponer paradas haría ver más anterioridad de la que hay.<br>
   Producción que dice: solo si da una cifra; si no, se deja vacío y se calcula con los equipos.</p>
 </div>
