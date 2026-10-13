@@ -333,8 +333,10 @@ function tocar(e, fn, esMarcador) {          // al tocar abre la ficha; si se es
 function ficha(ll, html, editar, extra = []) {   // recuadro con los datos, sin ir al listado
   seguir(false);
   const d = document.createElement('div'); d.className = 'ficha'; d.innerHTML = html;
-  [...(editar ? [['Editar', editar]] : []), ...extra].forEach(([t, f]) => {
-    const b = document.createElement('button'); b.textContent = t; b.onclick = () => { map.closePopup(); f(); }; d.appendChild(b); });
+  const bs = [...(editar ? [['Editar', editar]] : []), ...extra], fila = document.createElement('div'); fila.className = 'botones';   // dos columnas; el último va ancho si sobra
+  bs.forEach(([t, f], i) => { const b = document.createElement('button'); b.textContent = t; b.onclick = () => { map.closePopup(); f(); };
+    if (i === bs.length - 1 && bs.length % 2) b.className = 'ancho'; fila.appendChild(b); });
+  if (bs.length) d.appendChild(fila);
   const pop = L.popup({ maxWidth: 270, maxHeight: Math.round(innerHeight * 0.55), autoPanPaddingTopLeft: L.point(10, 170), autoPanPaddingBottomRight: L.point(10, 150) }).setLatLng(ll).setContent(d).openOn(map);
   return { d, pop };
 }
@@ -349,9 +351,9 @@ function fichaTrazo(t, ll) {
   const { d, pop } = ficha(ll, `<b>${esc(rotulo(t))}</b><br>${t.tipo === 'area' ? 'Área' : 'Línea'} · ${esc(queTxt(t))}${t.medicion ? ' · ' + esc(t.medicion) : ''}<br>${esc(t.upm)}<br>${med}` +
     `<br>Tramos: ${t.tramos_m.map(distTxt).join(' · ')}` + pie(t) +
     (fr ? '<div class="lmin" data-ant>Calculando anterioridad…</div>' : t.tipo === 'area' ? '<div class="lmin">No es frente: no lleva anterioridad. Si lo es, márquelo con «Editar».</div>' : ''),
-    () => abrirEditar('trazos', t, true), [...(fr ? [['Calcular anterioridad', () => abrirCalc(t)]] : []),
-      ...(fr && CAPAS.some(c => c.id === 'ge21') ? [['Ver en Ene 2021', () => verEnCapa('ge21', t)]] : []),
-      ...(t.tipo !== 'area' ? [] : t.veg_m2 ? [['Devolver los árboles al área', () => devolverVeg(t)]] : [['Quitar árboles del área', () => proponerVeg(t.vertices, t.area_m2, r => aceptarVegTrazo(t, r))]])]);
+    null, [[fr ? 'Editar frente' : 'Editar', () => abrirEditar('trazos', t, true)],
+      ...(fr ? [[t.ant ? 'Editar anterioridad' : 'Calcular anterioridad', () => abrirCalc(t)]] : []),
+      ...(t.tipo === 'area' && !t.veg_m2 ? [['Quitar árboles del área', () => proponerVeg(t.vertices, t.area_m2, r => aceptarVegTrazo(t, r))]] : [])]);
   if (fr) fichaAnt(t, d.querySelector('[data-ant]'), pop).catch(() => { d.querySelector('[data-ant]').textContent = 'No se pudo calcular la anterioridad.'; });
 }
 function verEnCapa(id, t) {                  // cambia el mapa a esa imagen y encuadra el trazo
@@ -362,11 +364,6 @@ async function aceptarVegTrazo(t, r) {       // guarda el área sin la vegetaci�
   const base = (await trazoGet(t.id)) || t, A0 = base.area_trazada_m2 || base.area_m2, veg = Math.round(A0 * r.frac);
   const nuevo = { ...base, area_trazada_m2: A0, area_m2: A0 - veg, veg_m2: veg, veg_url: r.url, veg_bounds: r.bounds, veg_manchas: r.manchas, editado: fechaLocal(new Date()) };
   await trazoGuardar(nuevo); await pintarTrazos(); avisar(`${rotulo(nuevo)}: ${haTxt(nuevo.area_m2)} sin árboles`);
-}
-async function devolverVeg(t) {
-  const base = (await trazoGet(t.id)) || t; if (!confirm(`¿Devolver a ${rotulo(base)} su área trazada de ${haTxt(base.area_trazada_m2)}?`)) return;
-  const { veg_m2, veg_url, veg_bounds, veg_manchas, area_trazada_m2, ...resto } = base;
-  await trazoGuardar({ ...resto, area_m2: area_trazada_m2, editado: fechaLocal(new Date()) }); await pintarTrazos(); avisar('Área trazada devuelta');
 }
 function fichaUPM(u) {
   const [E, N] = aCTM(u.lat, u.lon);
@@ -847,19 +844,20 @@ function htmlMinero(upm, R, eq, corto) {     // resumen del minero: una línea (
   if (!nF) return `<b>${esc(upm)}</b>: sin frentes dibujados. Dibuje sus frentes, activos e inactivos, y márquelos como frente.`;
   const fr = `${nF} frente${nF > 1 ? 's' : ''} (${R.nAct} activo${R.nAct === 1 ? '' : 's'}, ${R.nIn} inactivo${R.nIn === 1 ? '' : 's'})`;
   const ant = `al menos <b>${ha(R.A23)} de ${ha(R.A)} ha</b> ya intervenidas en jul-2023 (${p} %)`;
-  const ini = R.ini ? `inicio calculado <b>${fmes(R.ini)}</b> ` + (R.ini < R.corte ? '<b class="si">antes del corte</b>' : '<b class="no">después del corte</b>') : 'inicio calculado: faltan equipos';
+  const ini = !R.ini ? 'inicio calculado: faltan equipos' : R.ini >= R.corte && R.nSi ? `inicio calculado con equipos ${fmes(R.ini)} (solo un límite: Sentinel ya ve intervención en jul-2023)`
+    : `inicio calculado <b>${fmes(R.ini)}</b> ` + (R.ini < R.corte ? '<b class="si">antes del corte</b>' : '<b class="no">después del corte</b>');
   const dice = R.iniM ? ` · dice ${fmes(R.iniM)}` + (R.ini ? ` (${difTxt(R.iniM, R.ini)})` : '') : ' · inicio manifestado sin dato';
   const sinEq = eq.guardado ? '' : ' <i>Equipos sin anotar: valores por defecto.</i>';
   const alerta = R.iniM && R.iniM < R.corte && !R.F.some(f => f.est === 'si') && R.F.some(f => f.est === 'no')
     ? `<div class="alerta">⚠ Dice que empezó en ${fmes(R.iniM)}, pero sus frentes dibujados se abrieron después de jul-2023: la anterioridad tendría que salir de otros frentes o de otra prueba.</div>` : '';
-  if (corto) return `<b>${esc(upm)}</b> · ${fr} · ${ant} · ${ini}${dice}.${sinEq}${alerta}`;
+  if (corto) return `<b>Total de ${esc(upm)}</b> · ${fr} · ${ant} · ${ini}${dice}.${sinEq}${alerta}`;
   const top = Math.max(R.prodHoy, R.prodDice, R.prodObs);
   const escala = `<b>Escala:</b> hoy ${miles(R.prodHoy)} m³/año con ${dec(nv(eq.cBombasHoy), 1)} motobomba(s)` + (R.nAct ? '' : ' (no tiene frentes activos dibujados)') +
     (R.prodDice > 0 ? ` · lo que dice ${miles(R.prodDice)}` : '') + ` · observado desde el corte ${miles(R.prodObs)} (mínimo, con todos sus frentes) → ` +
     (top > UMBRAL ? '<b class="no">supera 165.000 m³/año</b>' : '<b class="si">bajo 165.000 m³/año</b>');
   const lista = R.F.map(f => `${esc(f.t.codigo || '')}${f.inactivo ? ' (inactivo)' : ''} ${SIMB[f.est]} ${f.est === 'nc' ? 'no concluyente' : Math.round(f.A23 / f.A * 100) + ' %'}`).join(' · ');
   const sinProf = R.F.filter(f => !(f.t.ant && f.t.ant.prof) && !(CALC && CALC.trazo && CALC.trazo.id === f.t.id)).length;
-  return `<b>${esc(upm)}</b> · ${fr} · ${ha(R.A)} ha<br><b>Anterioridad:</b> ${ant}; ${R.nSi} de ${nF} frente${nF > 1 ? 's' : ''} con ✓.<br>` +
+  return `<b>Total de ${esc(upm)}</b> · ${fr} · ${ha(R.A)} ha<br><b>Anterioridad:</b> ${ant}; ${R.nSi} de ${nF} frente${nF > 1 ? 's' : ''} con ✓.<br>` +
     `${ini.charAt(0).toUpperCase() + ini.slice(1)}${dice}.<br>${escala}.<br><span class="nota">Frentes: ${lista}` +
     (sinProf ? `<br>${sinProf} frente(s) sin guardar usan ${PROF} m de profundidad.` : '') + (paradasTxt(eq.paradas) ? `<br>Paradas puntuales: ${esc(paradasTxt(eq.paradas))}.` : '') + `</span>${sinEq}${alerta}`;
 }
@@ -975,13 +973,16 @@ async function fichaAnt(t, el, pop) {        // en la ficha del frente: su anter
   const eq = await equiposDe(t.upm), R = analizar(await frentesDe(t.upm, t), eq), f = R.F.find(x => x.t.id === t.id);
   let h;
   if (t.ant) {
-    h = `<b>Anterioridad</b> <span class="nota">(guardada ${esc(t.ant.fecha.slice(0, 16))})</span><br>${textoEst(f)}<br>` +
-      (f.ini ? `Inicio calculado: a más tardar <b>${fmes(f.ini)}</b>, ${f.ini < R.corte ? '<b class="si">antes de ago-2023</b>' : '<b class="no">después de ago-2023</b>'}<br>` : '') +
+    h = `<b>Anterioridad del frente</b> <span class="nota">(guardada ${esc(t.ant.fecha.slice(0, 16))})</span><br>${textoEst(f)}<br>` +
+      (!f.ini ? '' : f.est === 'si' && f.ini >= R.corte ? `Inicio calculado con equipos: a más tardar ${fmes(f.ini)}. <span class="nota">Es solo un límite: la imagen de jul-2023 ya lo muestra intervenido, y eso es lo que vale.</span><br>`
+        : `Inicio calculado: a más tardar <b>${fmes(f.ini)}</b>, ${f.ini < R.corte ? '<b class="si">antes de ago-2023</b>' : '<b class="no">después de ago-2023</b>'}<br>`) +
       (R.iniM ? `Inicio manifestado: <b>${fmes(R.iniM)}</b>${f.ini ? ' (' + difTxt(R.iniM, f.ini) + ')' : ''}` : 'Inicio manifestado: sin dato');
-  } else h = `<b>Anterioridad sin guardar.</b> ${textoEst(f)}<br><span class="nota">Toque «Calcular anterioridad», revise la profundidad y los equipos, y guarde.</span>`;
+  } else h = `<b>Anterioridad del frente sin guardar.</b> ${textoEst(f)}<br><span class="nota">Toque «Calcular anterioridad», revise la profundidad y los equipos, y guarde.</span>`;
   let g21 = null; try { g21 = await verde21(t.vertices); } catch (e) {}
-  h += '<br>' + texto21(g21) + alertasFrente(t, f.st, f.A, eq.cCorte).map(a => `<div class="alerta">⚠ ${esc(a)}</div>`).join('');
+  h += '<br>' + texto21(g21) + (g21 && !g21.sin ? ' <button class="enlace" data-ver21>Ver imagen</button>' : '') +   // cambia el mapa a la imagen de 2021 sobre el frente
+    alertasFrente(t, f.st, f.A, eq.cCorte).map(a => `<div class="alerta">⚠ ${esc(a)}</div>`).join('');
   el.innerHTML = h + `<div class="lmin">${htmlMinero(t.upm, R, eq, true)}</div>`;
+  const v21 = el.querySelector('[data-ver21]'); if (v21) v21.onclick = () => { map.closePopup(); verEnCapa('ge21', t); };
   if (pop && pop.isOpen()) pop.update();
 }
 

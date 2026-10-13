@@ -91,6 +91,8 @@
   .tsent { width:100%; border-collapse:collapse; margin:6px 0; font-size:14px; } .tsent td { padding:3px 0; border-bottom:1px solid #e3e7ef; } .tsent td:last-child { text-align:right; white-space:nowrap; padding-left:8px; }
   .caja button.mini { margin-top:6px; padding:6px 10px; border-radius:8px; border:1px solid var(--navy); background:#fff; color:var(--navy); font-weight:600; font-size:13px; } .caja .si { color:#1f7a34; } .caja .no { color:var(--red); }
   .ficha button { margin-top:8px; width:100%; height:40px; border-radius:10px; border:1px solid var(--navy); background:var(--navy); color:#fff; font-size:15px; font-weight:600; }
+  .ficha .botones { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:8px; } .ficha .botones button { margin-top:0; font-size:13.5px; line-height:1.15; padding:0 4px; } .ficha .botones button.ancho { grid-column:1 / -1; }
+  .ficha button.enlace { display:inline; width:auto; height:auto; margin:2px 0 0; padding:3px 9px; font-size:13px; background:#fff; color:var(--navy); }
   /* paneles */
   .panel { position:fixed; z-index:2000; left:0; right:0; bottom:0; max-height:86vh; overflow:auto; background:#fff; border-radius:16px 16px 0 0;
            padding:16px 16px calc(env(safe-area-inset-bottom) + 16px); box-shadow:0 -6px 24px rgba(0,0,0,.35); display:none; }
