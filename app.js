@@ -128,7 +128,21 @@ function verCapa(i) {
   [...$('capas').children].forEach((b, k) => b.classList.toggle('on', k === i && !b.classList.contains('herr')));
   $('fecha').style.display = 'block'; $('fecha').textContent = c.nombre;
 }
+// color de cada minero: el de sus puntos de oficina; a los que se sumen en campo se les asigna uno de esta paleta
+let COLORES = {};
+const PALETA = ['#FFD600', '#F06292', '#9575CD', '#4DB6AC', '#FF8A65', '#AED581', '#90A4AE'];
+function colorDe(nombre) {
+  if (!nombre || nombre === SIN || nombre === OTRO) return null;
+  if (COLORES[nombre]) return COLORES[nombre];
+  let h = 0; for (const ch of nombre) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return PALETA[h % PALETA.length];
+}
+function oscuro(hex, f = 0.62) {              // mismo color, más oscuro: los puntos de campo se distinguen del punto inicial
+  const n = parseInt(hex.slice(1), 16), c = k => Math.round(((n >> k) & 255) * f).toString(16).padStart(2, '0');
+  return '#' + c(16) + c(8) + c(0);
+}
 function pintarUPM(upm) {
+  COLORES = {}; upm.forEach(u => { if (u.persona && u.color && !COLORES[u.persona]) COLORES[u.persona] = u.color; });
   capaUPM.clearLayers();
   upm.forEach(u => {
     let m;
@@ -261,7 +275,7 @@ function promediar() {
 async function pintarMios() {
   const pts = (await puntosTodos()).filter(pasaFiltro); capaMios.clearLayers(); contar();
   pts.forEach(p => {
-    L.circleMarker([p.lat, p.lon], { radius: 6, color: '#fff', weight: 2, fillColor: '#C10617', fillOpacity: 1 })
+    L.circleMarker([p.lat, p.lon], { radius: 7, color: '#fff', weight: 2.5, fillColor: colorDe(p.upm) ? oscuro(colorDe(p.upm)) : '#C10617', fillOpacity: 1 })
       .on('click', e => tocar(e, () => fichaPunto(p), false)).addTo(capaMios);
     etiqueta([p.lat, p.lon], rotulo(p), 'der amar', () => fichaPunto(p)).addTo(capaMios);
   });
@@ -591,16 +605,18 @@ async function calcCopiar() {
   try { await navigator.clipboard.writeText(RESUMEN); avisar('Resumen copiado'); } catch (e) { avisar('No se pudo copiar'); }
 }
 
-async function pintarTrazos() {              // líneas en celeste y áreas en blanco con sombreado suave
+async function pintarTrazos() {              // en el color del minero asignado; sin minero, líneas celestes y áreas blancas
   const ts = (await trazosTodos()).filter(pasaFiltro); capaLineas.clearLayers(); capaAreas.clearLayers();
   ts.forEach(t => {
     const vs = t.vertices.map(([a, b]) => L.latLng(a, b));
     if (t.tipo === 'area') {
-      L.polygon(vs, { color: '#fff', weight: 2, fillColor: '#fff', fillOpacity: .14, interactive: false }).addTo(capaAreas);
+      const col = colorDe(t.upm) || '#ffffff', hu = t.que === HUELLA;   // la huella anterior al corte va punteada
+      L.polygon(vs, { color: '#000', weight: 5, opacity: .35, fill: false, interactive: false }).addTo(capaAreas);
+      L.polygon(vs, { color: col, weight: 3, dashArray: hu ? '10 8' : null, fillColor: col, fillOpacity: hu ? .08 : .18, interactive: false }).addTo(capaAreas);
       etiqueta(centro(vs), `${rotulo(t)} · ${haTxt(t.area_m2)}`, 'grande', () => fichaTrazo(t, centro(vs))).addTo(capaAreas);
     } else {
       L.polyline(vs, { color: '#000', weight: 5, opacity: .35, interactive: false }).addTo(capaLineas);
-      L.polyline(vs, { color: '#4DD0E1', weight: 4 }).on('click', e => tocar(e, () => fichaTrazo(t, e.latlng), false)).addTo(capaLineas);
+      L.polyline(vs, { color: colorDe(t.upm) || '#4DD0E1', weight: 4 }).on('click', e => tocar(e, () => fichaTrazo(t, e.latlng), false)).addTo(capaLineas);
       etiqueta(vs[vs.length - 1], `${rotulo(t)} · ${distTxt(t.longitud_m)}`, 'der', () => fichaTrazo(t, vs[vs.length - 1])).addTo(capaLineas);
     }
   });
