@@ -50,7 +50,7 @@ let VER = { puntos: true, lineas: true, areas: true };   // qué se muestra de l
 const TODOS = 'Todos', SIN = '— Sin asignar —', OTRO = 'Otro minero o tercero';
 let FILTRO = TODOS, EXTRA = [], PROX_P = 'P01', PROX_T = 'L01';
 const pasaFiltro = r => FILTRO === TODOS || r.upm === FILTRO;
-const rotulo = r => r.codigo ? r.codigo + (r.nombre ? ' · ' + r.nombre : '') : (r.nombre || '');   // consecutivo y nombre corto   // solo lo tomado en campo; los puntos de UPM de oficina siempre se ven
+const rotulo = r => r.codigo ? r.codigo + (esFrente(r) && r.estado ? ' · ' + r.estado.toLowerCase() : '') + (r.nombre ? ' · ' + r.nombre : '') : (r.nombre || '');   // consecutivo y nombre corto   // solo lo tomado en campo; los puntos de UPM de oficina siempre se ven
 function aplicarVer() {
   [[capaMios, 'puntos'], [capaLineas, 'lineas'], [capaAreas, 'areas']].forEach(([c, k]) => { if (VER[k]) c.addTo(map); else map.removeLayer(c); });
   [...$('filtros').querySelectorAll('button')].forEach(b => b.classList.toggle('on', !!VER[b.dataset.v]));
@@ -172,7 +172,7 @@ async function otroMinero(sel) {             // pide el nombre del otro minero o
   llenarUPM(); sel.value = n;
 }
 async function siguiente(pref) {             // consecutivo propio de cada tipo (P01, L01, A01…): no se reutiliza mientras quede alguno;
-  const regs = pref === 'P' ? await puntosTodos() : (await trazosTodos()).filter(t => (t.tipo === 'area' ? 'A' : 'L') === pref);
+  const regs = pref === 'P' ? await puntosTodos() : (await trazosTodos()).filter(t => (t.tipo === 'area' ? 'A' : 'L') === pref && !esFrente(t));   // los frentes van aparte, F1, F2… por minero
   const c = (await metaGet('consecutivos')) || {};
   if (!regs.length) { c[pref] = 0; await metaSet('consecutivos', c); return pref + '01'; }   // si se borraron todos, vuelve a 01
   const max = Math.max(0, ...regs.map(r => new RegExp('^' + pref + '(\\d+)$').exec(r.codigo || r.nombre || '')).filter(Boolean).map(m => +m[1]));
@@ -284,12 +284,16 @@ async function abrirLista() {
   const pts = (await puntosTodos()).filter(pasaFiltro).sort((a, b) => a.fecha < b.fecha ? 1 : -1); const l = $('lista'); l.innerHTML = '';
   const ts = (await trazosTodos()).filter(pasaFiltro).sort((a, b) => a.fecha < b.fecha ? 1 : -1);
   $('listaFiltro').textContent = FILTRO === TODOS ? 'Todo lo tomado en campo.' : `Solo lo de: ${FILTRO}. Cambia el minero en la barra de abajo para ver lo demás.`;
-  if (!pts.length && !ts.length) l.innerHTML = '<p class="nota">Todavía no hay nada guardado.</p>';
+  if (FILTRO !== TODOS) {                   // resumen del minero filtrado: anterioridad de sus frentes, inicio y escala
+    const r = document.createElement('div'); r.className = 'caja'; r.style.marginBottom = '6px'; r.innerHTML = 'Calculando el resumen del minero…'; l.appendChild(r);
+    (async () => { const eq = await equiposDe(FILTRO); r.innerHTML = htmlMinero(FILTRO, analizar(await frentesDe(FILTRO), eq), eq, false); })().catch(() => { r.textContent = 'No se pudo calcular el resumen.'; });
+  }
+  if (!pts.length && !ts.length) l.insertAdjacentHTML('beforeend', '<p class="nota">Todavía no hay nada guardado.</p>');
   ts.forEach(t => {
     const REG = t, REG_TIPO = 'trazos';
     const d = document.createElement('div'); d.className = 'item';
-    const med = t.tipo === 'area' ? `${haTxt(t.area_m2)} · perímetro ${distTxt(t.longitud_m)} · ${t.vertices.length} vértices` : `${distTxt(t.longitud_m)} · ${t.tramos_m.length} tramo(s)`;
-    d.innerHTML = `<div class="t"><b>${esc(rotulo(t))}</b> · ${t.tipo === 'area' ? 'Área' : 'Línea'} · ${esc(t.que)}${t.medicion ? ' · ' + esc(t.medicion) : ''}<br>${med} · ${esc(t.upm)}<br><span class="nota">${esc(t.local)}${t.nota ? ' · ' + esc(t.nota) : ''}</span></div>`;
+    const med = t.tipo === 'area' ? `${areaTxt(t)} · perímetro ${distTxt(t.longitud_m)} · ${t.vertices.length} vértices` : `${distTxt(t.longitud_m)} · ${t.tramos_m.length} tramo(s)`;
+    d.innerHTML = `<div class="t"><b>${esc(rotulo(t))}</b> · ${t.tipo === 'area' ? 'Área' : 'Línea'} · ${esc(queTxt(t))}${t.medicion ? ' · ' + esc(t.medicion) : ''}<br>${med} · ${esc(t.upm)}<br><span class="nota">${esc(t.local)}${t.nota ? ' · ' + esc(t.nota) : ''}</span></div>`;
     const v = document.createElement('button'); v.textContent = 'Ver';
     v.onclick = () => { abrir(null); seguir(false); const k = t.tipo === 'area' ? 'areas' : 'lineas'; if (!VER[k]) alternarVer(k);
       map.fitBounds(L.latLngBounds(t.vertices), { paddingTopLeft: [20, 170], paddingBottomRight: [110, 130], maxZoom: 19 }); };
@@ -331,7 +335,8 @@ function ficha(ll, html, editar, extra = []) {   // recuadro con los datos, sin 
   const d = document.createElement('div'); d.className = 'ficha'; d.innerHTML = html;
   [...(editar ? [['Editar', editar]] : []), ...extra].forEach(([t, f]) => {
     const b = document.createElement('button'); b.textContent = t; b.onclick = () => { map.closePopup(); f(); }; d.appendChild(b); });
-  L.popup({ maxWidth: 270, autoPanPaddingTopLeft: L.point(10, 170), autoPanPaddingBottomRight: L.point(10, 150) }).setLatLng(ll).setContent(d).openOn(map);
+  const pop = L.popup({ maxWidth: 270, maxHeight: Math.round(innerHeight * 0.55), autoPanPaddingTopLeft: L.point(10, 170), autoPanPaddingBottomRight: L.point(10, 150) }).setLatLng(ll).setContent(d).openOn(map);
+  return { d, pop };
 }
 const pie = r => `<br>${esc(r.local)}` + (r.nota ? `<br><i>${esc(r.nota)}</i>` : '') + (r.editado ? `<br><span class="nota">Editado ${esc(r.editado)}</span>` : '');
 function fichaPunto(p) {
@@ -339,9 +344,29 @@ function fichaPunto(p) {
     (p.precision != null ? ` · ±${Math.round(p.precision)} m` : '') + ` · ${esc(p.origen)}` + pie(p), () => abrirEditar('puntos', p, true));
 }
 function fichaTrazo(t, ll) {
-  const med = t.tipo === 'area' ? `${haTxt(t.area_m2)} · perímetro ${distTxt(t.longitud_m)} · ${t.vertices.length} vértices` : `${distTxt(t.longitud_m)} · ${t.tramos_m.length} tramo(s)`;
-  ficha(ll, `<b>${esc(rotulo(t))}</b><br>${t.tipo === 'area' ? 'Área' : 'Línea'} · ${esc(t.que)}${t.medicion ? ' · ' + esc(t.medicion) : ''}<br>${esc(t.upm)}<br>${med}<br>Tramos: ${t.tramos_m.map(distTxt).join(' · ')}` + pie(t),
-    () => abrirEditar('trazos', t, true), t.tipo === 'area' ? [['Calcular anterioridad', () => abrirCalc(t)]] : []);
+  const med = t.tipo === 'area' ? `${areaTxt(t)} · perímetro ${distTxt(t.longitud_m)} · ${t.vertices.length} vértices` : `${distTxt(t.longitud_m)} · ${t.tramos_m.length} tramo(s)`;
+  const fr = esFrente(t);
+  const { d, pop } = ficha(ll, `<b>${esc(rotulo(t))}</b><br>${t.tipo === 'area' ? 'Área' : 'Línea'} · ${esc(queTxt(t))}${t.medicion ? ' · ' + esc(t.medicion) : ''}<br>${esc(t.upm)}<br>${med}` +
+    `<br>Tramos: ${t.tramos_m.map(distTxt).join(' · ')}` + pie(t) +
+    (fr ? '<div class="lmin" data-ant>Calculando anterioridad…</div>' : t.tipo === 'area' ? '<div class="lmin">No es frente: no lleva anterioridad. Si lo es, márquelo con «Editar».</div>' : ''),
+    () => abrirEditar('trazos', t, true), [...(fr ? [['Calcular anterioridad', () => abrirCalc(t)]] : []),
+      ...(fr && CAPAS.some(c => c.id === 'ge21') ? [['Ver en Ene 2021', () => verEnCapa('ge21', t)]] : []),
+      ...(t.tipo !== 'area' ? [] : t.veg_m2 ? [['Devolver los árboles al área', () => devolverVeg(t)]] : [['Quitar árboles del área', () => proponerVeg(t.vertices, t.area_m2, r => aceptarVegTrazo(t, r))]])]);
+  if (fr) fichaAnt(t, d.querySelector('[data-ant]'), pop).catch(() => { d.querySelector('[data-ant]').textContent = 'No se pudo calcular la anterioridad.'; });
+}
+function verEnCapa(id, t) {                  // cambia el mapa a esa imagen y encuadra el trazo
+  const i = CAPAS.findIndex(c => c.id === id); if (i < 0) { avisar('Esa imagen no está cargada'); return; }
+  verCapa(i); map.fitBounds(L.latLngBounds(t.vertices), { paddingTopLeft: [20, 170], paddingBottomRight: [110, 150], maxZoom: 18 });
+}
+async function aceptarVegTrazo(t, r) {       // guarda el área sin la vegetación aceptada
+  const base = (await trazoGet(t.id)) || t, A0 = base.area_trazada_m2 || base.area_m2, veg = Math.round(A0 * r.frac);
+  const nuevo = { ...base, area_trazada_m2: A0, area_m2: A0 - veg, veg_m2: veg, veg_url: r.url, veg_bounds: r.bounds, veg_manchas: r.manchas, editado: fechaLocal(new Date()) };
+  await trazoGuardar(nuevo); await pintarTrazos(); avisar(`${rotulo(nuevo)}: ${haTxt(nuevo.area_m2)} sin árboles`);
+}
+async function devolverVeg(t) {
+  const base = (await trazoGet(t.id)) || t; if (!confirm(`¿Devolver a ${rotulo(base)} su área trazada de ${haTxt(base.area_trazada_m2)}?`)) return;
+  const { veg_m2, veg_url, veg_bounds, veg_manchas, area_trazada_m2, ...resto } = base;
+  await trazoGuardar({ ...resto, area_m2: area_trazada_m2, editado: fechaLocal(new Date()) }); await pintarTrazos(); avisar('Área trazada devuelta');
 }
 function fichaUPM(u) {
   const [E, N] = aCTM(u.lat, u.lon);
@@ -360,22 +385,24 @@ function medidas(vs, cerrada) {              // tramos, total y área, planos en
   return { tramos, total: tramos.reduce((a, b) => a + b, 0), area };
 }
 function medirAbrir() {
-  MIDIENDO = true; CERRADA = false; VERT = []; abrir(null);
+  MIDIENDO = true; CERRADA = false; VERT = []; VEG = null; abrir(null);
   $('pMedir').classList.add('abierto'); $('mira').style.display = 'none'; marcarArea(); pintarMed();
 }
 function medirFin(preguntar) {
   if (preguntar && VERT.length > 1 && !confirm('¿Salir sin guardar esta medición?')) return;
-  MIDIENDO = false; VERT = []; capaMed.clearLayers(); if (guiaMed) { map.removeLayer(guiaMed); guiaMed = null; }
+  MIDIENDO = false; VERT = []; VEG = null; capaMed.clearLayers(); capaVeg.clearLayers(); $('pVeg').classList.remove('abierto'); if (guiaMed) { map.removeLayer(guiaMed); guiaMed = null; }
   $('pMedir').classList.remove('abierto'); $('mira').style.display = ''; actualizarMira();
 }
 function marcarArea() { const b = $('bMedArea'); b.classList.toggle('on', CERRADA); b.textContent = CERRADA ? 'Dejar como línea' : 'Cerrar área'; }
-function medirAgregar(ll) { VERT.push(L.latLng(ll)); pintarMed(); }
+function medirAgregar(ll) { VERT.push(L.latLng(ll)); VEG = null; pintarMed(); }
 function pintarMed() {
   capaMed.clearLayers();
   const area = CERRADA && VERT.length > 2, m = medidas(VERT, area);
+  $('filaVeg').style.display = area ? 'flex' : 'none';
   if (area) {
     L.polygon(VERT, { color: '#F9B21A', weight: 3, fillColor: '#F9B21A', fillOpacity: .15, interactive: false }).addTo(capaMed);
-    etiqueta(centro(VERT), haTxt(m.area), 'grande').addTo(capaMed);
+    if (VEG) L.imageOverlay(VEG.url, VEG.bounds, { interactive: false }).addTo(capaMed);
+    etiqueta(centro(VERT), VEG ? haTxt(m.area * (1 - VEG.frac)) : haTxt(m.area), 'grande').addTo(capaMed);
   } else if (VERT.length > 1) {
     L.polyline(VERT, { color: '#000', weight: 6, opacity: .4, interactive: false }).addTo(capaMed);
     L.polyline(VERT, { color: '#F9B21A', weight: 3, interactive: false }).addTo(capaMed);
@@ -388,7 +415,7 @@ function textoMed() {                       // totales, último tramo y línea g
   if (!MIDIENDO) return;
   const c = map.getCenter(), area = CERRADA && VERT.length > 2, m = medidas(VERT, area);
   let h;
-  if (area) h = `<b>${haTxt(m.area)}</b> · perímetro ${distTxt(m.total)} · ${VERT.length} vértices`;
+  if (area) h = (VEG ? `<b>${haTxt(m.area * (1 - VEG.frac))}</b> sin árboles (${haTxt(m.area)} trazadas)` : `<b>${haTxt(m.area)}</b>`) + ` · perímetro ${distTxt(m.total)} · ${VERT.length} vértices`;
   else {
     h = `<b>${distTxt(m.total)}</b> en total · ${m.tramos.length} tramo(s)`;
     if (CERRADA) h += '<br>Para cerrar un área hacen falta al menos 3 puntos.';
@@ -404,30 +431,82 @@ function textoMed() {                       // totales, último tramo y línea g
   }
   $('medTxt').innerHTML = h;
 }
-const MEDICION = ['En campo (recorrida)', 'Sobre la imagen (no visitada)'], HUELLA = 'Huella en imagen anterior al corte';
-const QUE = { area: ['Área', 'Frente de explotación', 'Área intervenida o removida', HUELLA, 'Entable o planta de beneficio', 'Piscina o sedimentador', 'Botadero o estéril', 'Campamento', 'Otro'],
-              linea: ['Distancia entre puntos', 'Recorrido o acceso', 'Canal o drenaje', 'Frente lineal', 'Otro'] };   // el primero es el predeterminado
+const MEDICION = ['En campo (recorrida)', 'Sobre la imagen (no visitada)'], HUELLA = 'Huella en imagen anterior al corte';   // la huella ya no se ofrece; queda para registros de antes
+const FRENTE = 'Frente de explotación';
+const NOFRENTE = ['— Elija —', 'Área intervenida o removida (no es frente)', 'Entable o planta de beneficio', 'Piscina o sedimentador', 'Botadero o estéril', 'Campamento', 'Vía o acceso', 'Otro'];
+const QUE = { linea: ['Distancia entre puntos', 'Recorrido o acceso', 'Canal o drenaje', 'Frente lineal', 'Otro'] };   // el primero es el predeterminado
+const esFrente = t => t.tipo === 'area' && (t.frente != null ? t.frente : t.que === FRENTE);
+const queTxt = t => esFrente(t) ? `Frente ${t.estado ? t.estado.toLowerCase() : '(estado sin dato)'}` + (t.estado === 'Inactivo' && t.parado_desde ? `, parado desde ${fmesISO(t.parado_desde)}` : '') : (t.que || '');
+const areaTxt = t => t.veg_m2 ? `${haTxt(t.area_m2)} (${haTxt(t.area_trazada_m2)} trazadas − ${haTxt(t.veg_m2)} de árboles)` : haTxt(t.area_m2);
+async function numeroLibre(upm, sinId) {     // frentes por minero: F1, F2…; el número de un frente borrado se vuelve a usar
+  const usados = new Set((await trazosTodos()).filter(t => esFrente(t) && t.upm === upm && t.id !== sinId).map(t => t.frente_n));
+  let n = 1; while (usados.has(n)) n++; return n;
+}
+function segPoner(id, v) { const g = $(id); g.dataset.v = v || ''; [...g.children].forEach(b => b.classList.toggle('on', b.dataset.v === v)); }
+function frPoner(x, t) {                     // llena el bloque «¿Es un frente?» del panel x ('t' nuevo, 'e' editar)
+  const fr = t ? esFrente(t) : null;
+  segPoner(x + 'EsFr', fr == null ? '' : fr ? 'si' : 'no');
+  segPoner(x + 'Estado', fr && t.estado ? t.estado : '');
+  $(x + 'Parado').value = (t && t.parado_desde) || '';
+  const s = $(x + 'Tipo'), ops = [...NOFRENTE]; s.innerHTML = '';
+  if (t && !fr && t.que && !ops.includes(t.que)) ops.splice(1, 0, t.que);   // tipos de registros viejos («Área», huella)
+  ops.forEach(o => { const e = document.createElement('option'); e.textContent = o; s.appendChild(e); });
+  s.value = t && !fr && t.que ? t.que : NOFRENTE[0];
+  frRefrescar(x);
+}
+function frRefrescar(x) {
+  const es = $(x + 'EsFr').dataset.v;
+  $(x + 'SiFr').style.display = es === 'si' ? '' : 'none'; $(x + 'NoFr').style.display = es === 'no' ? '' : 'none';
+  $(x + 'ParadoFila').style.display = $(x + 'Estado').dataset.v === 'Inactivo' ? '' : 'none';
+  alertasPanel(x); if (x === 't') tituloT();
+}
+function frLeer(x) {                         // los campos del bloque, o el aviso de lo que falta responder
+  const es = $(x + 'EsFr').dataset.v;
+  if (!es) return { falta: 'Indique si es un frente de explotación' };
+  if (es === 'si') {
+    const estado = $(x + 'Estado').dataset.v; if (!estado) return { falta: 'Indique si el frente está activo o inactivo' };
+    return { frente: true, que: FRENTE, estado, parado_desde: estado === 'Inactivo' ? ($(x + 'Parado').value || null) : null };
+  }
+  const que = $(x + 'Tipo').value; if (que === NOFRENTE[0]) return { falta: 'Elija qué tipo de área es' };
+  return { frente: false, que, estado: null, parado_desde: null };
+}
+async function tituloT() {                   // el título dice si se guarda como frente (F de su minero) o como área (A)
+  if (!CERRADA) return;
+  if ($('tEsFr').dataset.v === 'si') { const u = $('tUpm').value, n = await numeroLibre(u); $('tTitulo').innerHTML = `Guardar frente <span>F${n}</span> · ${esc(u)}`; }
+  else $('tTitulo').innerHTML = `Guardar área <span>${PROX_T}</span>`;
+}
 async function medirGuardar() {              // pregunta qué es antes de guardar
   const tipo = CERRADA ? 'area' : 'linea';
   if (VERT.length < (tipo === 'area' ? 3 : 2)) { avisar(tipo === 'area' ? 'Para un área hacen falta al menos 3 puntos' : 'Pon al menos 2 puntos'); return; }
   const m = medidas(VERT, tipo === 'area'); PROX_T = await siguiente(tipo === 'area' ? 'A' : 'L');
   $('tTitulo').innerHTML = (tipo === 'area' ? 'Guardar área ' : 'Guardar línea ') + `<span>${PROX_T}</span>`;
-  $('tResumen').innerHTML = (tipo === 'area' ? `<b>Área:</b> ${haTxt(m.area)} · <b>Perímetro:</b> ${distTxt(m.total)} · ${VERT.length} vértices`
+  const neta = tipo === 'area' && VEG ? m.area * (1 - VEG.frac) : m.area;
+  $('tResumen').innerHTML = (tipo === 'area' ? `<b>Área:</b> ${VEG ? `${haTxt(m.area)} − ${haTxt(m.area - neta)} de árboles = <b>${haTxt(neta)}</b>` : haTxt(m.area)} · <b>Perímetro:</b> ${distTxt(m.total)} · ${VERT.length} vértices`
                                              : `<b>Longitud:</b> ${distTxt(m.total)} · ${m.tramos.length} tramo(s)`) + `<br>Tramos: ${m.tramos.map(distTxt).join(' · ')}`;
   $('tCorto').value = ''; $('tNota').value = ''; if (FILTRO !== TODOS) $('tUpm').value = FILTRO;
-  const q = $('tQue'); q.innerHTML = ''; QUE[tipo].forEach(t => { const o = document.createElement('option'); o.textContent = t; q.appendChild(o); });
+  $('tFrBloque').style.display = tipo === 'area' ? '' : 'none'; $('tQueFila').style.display = tipo === 'area' ? 'none' : '';
+  PANEL_SENT.t = null; $('tSent').style.display = 'none';
+  if (tipo === 'area') { frPoner('t', null); vistaSentinel('t', VERT.map(v => [v.lat, v.lng]), neta); }
+  else { $('tAlerta').innerHTML = ''; const q = $('tQue'); q.innerHTML = ''; QUE.linea.forEach(t => { const o = document.createElement('option'); o.textContent = t; q.appendChild(o); }); }
   abrir('pTrazo');
 }
 async function trazoConfirmar() {
   const tipo = CERRADA && VERT.length > 2 ? 'area' : 'linea', m = medidas(VERT, tipo === 'area'), ahora = new Date();
-  const reg = { id: ahora.getTime().toString(36) + Math.random().toString(36).slice(2, 6), tipo, codigo: PROX_T, nombre: $('tCorto').value.trim(),
-    que: $('tQue').value, medicion: $('tQue').value === HUELLA ? MEDICION[1] : $('tMed').value,
+  const fr = tipo === 'area' ? frLeer('t') : { que: $('tQue').value };
+  if (fr.falta) { avisar(fr.falta); return; }
+  let codigo = PROX_T, extra = {};
+  if (fr.frente) { const n = await numeroLibre($('tUpm').value); codigo = 'F' + n; extra.frente_n = n; }
+  if (tipo === 'area' && VEG) extra = { ...extra, area_trazada_m2: Math.round(m.area), veg_m2: Math.round(m.area * VEG.frac), veg_url: VEG.url, veg_bounds: VEG.bounds, veg_manchas: VEG.manchas };
+  const d = PANEL_SENT.t, al = fr.frente && d ? alertasFrente(fr, d.st, d.A) : [];
+  const reg = { id: ahora.getTime().toString(36) + Math.random().toString(36).slice(2, 6), tipo, codigo, nombre: $('tCorto').value.trim(),
+    ...fr, medicion: $('tMed').value,
     upm: $('tUpm').value, nota: $('tNota').value.trim(), fecha: ahora.toISOString(), local: fechaLocal(ahora),
     vertices: VERT.map(v => [+v.lat.toFixed(7), +v.lng.toFixed(7)]), ctm: VERT.map(v => aCTM(v.lat, v.lng).map(Math.round)),
-    tramos_m: m.tramos.map(d => Math.round(d * 10) / 10), longitud_m: Math.round(m.total * 10) / 10, area_m2: tipo === 'area' ? Math.round(m.area) : null };
-  await trazoGuardar(reg); await gastar(reg.codigo); abrir(null); medirFin(false);
+    tramos_m: m.tramos.map(d => Math.round(d * 10) / 10), longitud_m: Math.round(m.total * 10) / 10,
+    area_m2: tipo === 'area' ? Math.round(VEG ? m.area * (1 - VEG.frac) : m.area) : null, ...extra, ...(al.length ? { alertas_al_guardar: al } : {}) };
+  await trazoGuardar(reg); if (!fr.frente) await gastar(reg.codigo); abrir(null); medirFin(false);
   const k = tipo === 'area' ? 'areas' : 'lineas'; if (!VER[k]) alternarVer(k);
-  await pintarTrazos(); avisar(`Guardada ${rotulo(reg)} · ` + (tipo === 'area' ? haTxt(reg.area_m2) : distTxt(m.total)));
+  await pintarTrazos(); avisar(`Guardado ${rotulo(reg)} · ` + (tipo === 'area' ? haTxt(reg.area_m2) : distTxt(m.total)));
 }
 let EDIT = null;
 function ponerValor(sel, v) {                // selecciona v aunque no esté en la lista (registros viejos)
@@ -436,12 +515,16 @@ function ponerValor(sel, v) {                // selecciona v aunque no esté en 
 }
 function abrirEditar(almacen, r, desdeMapa = false) {
   EDIT = { almacen, r, desdeMapa };
+  const area = almacen === 'trazos' && r.tipo === 'area';
   $('eCodigo').textContent = r.codigo || r.nombre || '';
   $('eResumen').innerHTML = almacen === 'puntos' ? `<b>Punto</b> · E ${miles(r.este)} · N ${miles(r.norte)}${r.precision != null ? ' · ±' + Math.round(r.precision) + ' m' : ''}<br>${esc(r.local)}`
-    : (r.tipo === 'area' ? `<b>Área</b> · ${haTxt(r.area_m2)} · perímetro ${distTxt(r.longitud_m)}` : `<b>Línea</b> · ${distTxt(r.longitud_m)} · ${r.tramos_m.length} tramo(s)`) + `<br>${esc(r.local)}`;
+    : (r.tipo === 'area' ? `<b>Área</b> · ${areaTxt(r)} · perímetro ${distTxt(r.longitud_m)}` : `<b>Línea</b> · ${distTxt(r.longitud_m)} · ${r.tramos_m.length} tramo(s)`) + `<br>${esc(r.local)}`;
   $('eCorto').value = r.nombre || '';
-  $('eQueFila').style.display = almacen === 'trazos' ? '' : 'none';
-  if (almacen === 'trazos') { const q = $('eQue'); q.innerHTML = ''; QUE[r.tipo].forEach(t => { const o = document.createElement('option'); o.textContent = t; q.appendChild(o); }); if (r.que && !QUE[r.tipo].includes(r.que)) { const o = document.createElement('option'); o.textContent = r.que; q.appendChild(o); } q.value = r.que || QUE[r.tipo][0]; }
+  $('eFrBloque').style.display = area ? '' : 'none';
+  $('eQueFila').style.display = almacen === 'trazos' && !area ? '' : 'none';
+  PANEL_SENT.e = null; $('eSent').style.display = 'none'; $('eAlerta').innerHTML = '';
+  if (area) { frPoner('e', r); vistaSentinel('e', r.vertices, r.area_m2); }
+  else if (almacen === 'trazos') { const q = $('eQue'); q.innerHTML = ''; QUE.linea.forEach(t => { const o = document.createElement('option'); o.textContent = t; q.appendChild(o); }); if (r.que && !QUE.linea.includes(r.que)) { const o = document.createElement('option'); o.textContent = r.que; q.appendChild(o); } q.value = r.que || QUE.linea[0]; }
   $('eMedFila').style.display = almacen === 'trazos' ? '' : 'none';
   if (almacen === 'trazos') { const e = $('eMed'); e.innerHTML = ''; [...MEDICION, ...(r.medicion ? [] : ['— Sin dato —'])].forEach(t => { const o = document.createElement('option'); o.textContent = t; e.appendChild(o); }); e.value = r.medicion || '— Sin dato —'; }
   ponerValor($('eUpm'), r.upm); $('eNota').value = r.nota || '';
@@ -450,7 +533,17 @@ function abrirEditar(almacen, r, desdeMapa = false) {
 async function guardarEdicion() {
   const { almacen, r } = EDIT;
   const nuevo = { ...r, nombre: $('eCorto').value.trim() || (r.codigo ? '' : r.nombre), upm: $('eUpm').value, nota: $('eNota').value.trim(), editado: fechaLocal(new Date()) };
-  if (almacen === 'trazos') { nuevo.que = $('eQue').value; const md = nuevo.que === HUELLA ? MEDICION[1] : $('eMed').value; if (MEDICION.includes(md)) nuevo.medicion = md; }
+  if (almacen === 'trazos') {
+    if (r.tipo === 'area') {
+      const f = frLeer('e'); if (f.falta) { avisar(f.falta); return; } Object.assign(nuevo, f);
+      if (f.frente && (!esFrente(r) || r.upm !== nuevo.upm || !r.frente_n)) { const n = await numeroLibre(nuevo.upm, r.id); nuevo.frente_n = n; nuevo.codigo = 'F' + n; }   // pasa a frente o cambia de minero
+      if (!f.frente && esFrente(r)) { const c = await siguiente('A'); nuevo.codigo = c; nuevo.frente_n = null; await gastar(c); }       // deja de ser frente: vuelve a la serie A
+      const d = PANEL_SENT.e, al = f.frente && d ? alertasFrente(f, d.st, d.A) : [];
+      if (al.length) nuevo.alertas_al_guardar = al; else delete nuevo.alertas_al_guardar;
+    }
+    else nuevo.que = $('eQue').value;
+    const md = $('eMed').value; if (MEDICION.includes(md)) nuevo.medicion = md;
+  }
   if (almacen === 'puntos') { await puntoGuardar(nuevo); await pintarMios(); } else { await trazoGuardar(nuevo); await pintarTrazos(); }
   avisar(`Editado ${rotulo(nuevo)}`); if (EDIT.desdeMapa) abrir(null); else abrirLista();
 }
@@ -516,158 +609,421 @@ function relativoSentinel(S, polys) {
   const p80 = arr => { const t = arr.slice().sort((p, q) => p - q), k = 0.8 * (t.length - 1), i = Math.floor(k); return t[i] + (t[Math.min(i + 1, t.length - 1)] - t[i]) * (k - i); };
   const f23 = p80(r23), f26 = p80(r26);
   const calc = (dx, dy, interior) => {         // la máscara corrida dx, dy píxeles simula un desfase entre Google y Sentinel
-    let num = 0, den = 0, n = 0, alt = 0;
+    let num = 0, den = 0, n = 0, alt = 0, rev = 0;
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
       const xs = x - dx, ys = y - dy; if (xs < 0 || ys < 0 || xs >= W || ys >= H) continue;
       const j = ys * W + xs; if (!M[j]) continue;
       if (interior && !(xs > 0 && xs < W - 1 && ys > 0 && ys < H - 1 && M[j - 1] && M[j + 1] && M[j - W] && M[j + W])) continue;
       const a = S.n23[gi(x, y)], b = S.n26[gi(x, y)]; if (isNaN(a) || isNaN(b)) continue;
       n++; const d26 = Math.max(0, f26 - b), d23 = Math.max(0, f23 - a);
-      if (d26 > 0.05) { alt++; num += Math.min(d23, d26); den += d26; }
+      if (d26 > 0.05) { alt++; num += Math.min(d23, d26); den += d26; } else if (d23 > 0.15) rev++;
     }
-    return { R: den > 0 ? num / den : null, n, alt };
+    return { R: den > 0 ? num / den : null, n, alt, rev };
   };
   const base = calc(0, 0, false), vals = [base.R];
   [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, 1], [-1, 1], [1, -1]].forEach(([dx, dy]) => vals.push(calc(dx, dy, false).R));
   vals.push(calc(0, 0, true).R);
   const ok = vals.filter(v => v != null);
-  return { R: base.R, Rmin: ok.length ? Math.min(...ok) : null, Rmax: ok.length ? Math.max(...ok) : null, n: base.n, alt: base.alt, f23, f26, fecha23: S.meta.fecha2023, fecha26: S.meta.fecha2026 };
+  return { R: base.R, Rmin: ok.length ? Math.min(...ok) : null, Rmax: ok.length ? Math.max(...ok) : null, n: base.n, alt: base.alt, rev: base.rev, f23, f26, fecha23: S.meta.fecha2023, fecha26: S.meta.fecha2026 };
 }
 
-/* ---------------- calculadora de anterioridad ---------------- */
+/* ---------------- imágenes de Google en el teléfono: verdor de 2021 y árboles dentro de un trazo ---------------- */
+const mercX = (lon, Z) => (lon + 180) / 360 * 256 * 2 ** Z;
+const mercY = (lat, Z) => { const s = Math.sin(lat * Math.PI / 180); return (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * 256 * 2 ** Z; };
+const mercLon = (x, Z) => x / (256 * 2 ** Z) * 360 - 180;
+const mercLat = (y, Z) => Math.atan(Math.sinh(Math.PI * (1 - 2 * y / (256 * 2 ** Z)))) * 180 / Math.PI;
+async function mosaicoGoogle(capa, Z, vertices, margenM) {   // recorte de la capa alrededor del trazo y máscara del trazo, con las teselas del teléfono
+  const mpp = 156543.03 * Math.cos(vertices[0][0] * Math.PI / 180) / 2 ** Z, mg = Math.ceil(margenM / mpp) + 2;
+  const P = vertices.map(([la, lo]) => [mercX(lo, Z), mercY(la, Z)]);
+  const X0 = Math.floor(Math.min(...P.map(p => p[0]))) - mg, X1 = Math.ceil(Math.max(...P.map(p => p[0]))) + mg;
+  const Y0 = Math.floor(Math.min(...P.map(p => p[1]))) - mg, Y1 = Math.ceil(Math.max(...P.map(p => p[1]))) + mg;
+  const W = X1 - X0, H = Y1 - Y0; if (W * H > 6e6) return null;
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H; const g = cv.getContext('2d', { willReadFrequently: true });
+  let n = 0;
+  for (let tx = Math.floor(X0 / 256); tx <= Math.floor((X1 - 1) / 256); tx++) for (let ty = Math.floor(Y0 / 256); ty <= Math.floor((Y1 - 1) / 256); ty++) {
+    const b = await teselaGet(`${capa}/${Z}/${tx}/${ty}`); if (!b) continue;
+    const im = await createImageBitmap(b); g.drawImage(im, tx * 256 - X0, ty * 256 - Y0); if (im.close) im.close(); n++;
+  }
+  if (!n) return null;
+  const rgba = g.getImageData(0, 0, W, H).data;
+  const mc = document.createElement('canvas'); mc.width = W; mc.height = H; const h = mc.getContext('2d', { willReadFrequently: true });
+  h.fillStyle = '#fff'; h.beginPath(); P.forEach(([x, y], i) => i ? h.lineTo(x - X0, y - Y0) : h.moveTo(x - X0, y - Y0)); h.closePath(); h.fill();
+  const md = h.getImageData(0, 0, W, H).data, dentro = new Uint8Array(W * H);
+  for (let i = 0; i < W * H; i++) dentro[i] = md[i * 4 + 3] > 127 ? 1 : 0;
+  return { W, H, X0, Y0, Z, mpp, rgba, dentro };
+}
+function suavizar(M) {                       // R, G, B promediados 3×3 (sin contar lo que no tiene imagen); NaN sin dato
+  const { W, H, rgba } = M, N = W * H, ok = new Uint8Array(N), out = [new Float32Array(N), new Float32Array(N), new Float32Array(N)];
+  for (let i = 0; i < N; i++) { const r = rgba[i * 4], v = rgba[i * 4 + 1], b = rgba[i * 4 + 2]; ok[i] = rgba[i * 4 + 3] >= 128 && r + v + b >= 15 ? 1 : 0; }
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = y * W + x; if (!ok[i]) { out[0][i] = out[1][i] = out[2][i] = NaN; continue; }
+    let r = 0, v = 0, b = 0, c = 0;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const xx = x + dx, yy = y + dy; if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue; const j = yy * W + xx; if (!ok[j]) continue; r += rgba[j * 4]; v += rgba[j * 4 + 1]; b += rgba[j * 4 + 2]; c++; }
+    out[0][i] = r / c; out[1][i] = v / c; out[2][i] = b / c;
+  }
+  return out;
+}
+const verdorDe = (r, v) => (v - r) / (v + r + 1);
+function componentes(sel, W, H, fn) {        // recorre las manchas conectadas (4 vecinos) de sel = 1; fn(lista de píxeles)
+  const vis = new Uint8Array(W * H), pila = new Int32Array(W * H);
+  for (let s = 0; s < W * H; s++) {
+    if (!sel[s] || vis[s]) continue;
+    let n = 0, top = 0; const lista = []; pila[top++] = s; vis[s] = 1;
+    while (top) { const i = pila[--top]; lista.push(i); n++; const x = i % W;
+      for (const j of [x > 0 ? i - 1 : -1, x < W - 1 ? i + 1 : -1, i - W, i + W]) if (j >= 0 && j < W * H && sel[j] && !vis[j]) { vis[j] = 1; pila[top++] = j; } }
+    fn(lista);
+  }
+}
+function morfo(m, W, H, dilatar) {           // dilata o erosiona 3×3
+  const o = new Uint8Array(W * H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    let r = dilatar ? 0 : 1;
+    for (let dy = -1; dy <= 1 && r === (dilatar ? 0 : 1); dy++) for (let dx = -1; dx <= 1; dx++) { const xx = x + dx, yy = y + dy;
+      const q = xx < 0 || yy < 0 || xx >= W || yy >= H ? (dilatar ? 0 : 1) : m[yy * W + xx]; if (dilatar ? q : !q) { r = dilatar ? 1 : 0; break; } }
+    o[y * W + x] = r;
+  }
+  return o;
+}
+const CACHE_21 = new Map();
+async function verde21(vertices) {           // Google ene-2021: parte del trazo que ya se veía sin bosque (arena, agua, suelo); orientativo
+  if (!CAPAS.some(c => c.id === 'ge21')) return { sin: true };
+  const k = JSON.stringify(vertices); if (CACHE_21.has(k)) return CACHE_21.get(k);
+  let res = { sin: true };
+  const M = await mosaicoGoogle('ge21', 17, vertices, 3);
+  if (M) {                                    // regla fija calibrada contra Sentinel 2023: marca 4 % del bosque y 82 % del suelo
+    const [r, v, b] = suavizar(M), N = r.length, des = new Uint8Array(N); let nin = 0, vin = 0, alt = 0;
+    for (let i = 0; i < N; i++) { if (isNaN(r[i])) continue; const g = verdorDe(r[i], v[i]), L = (r[i] + v[i] + b[i]) / 3; des[i] = (r[i] - b[i] > 4 && g < 0.07) || (L > 150 && g < 0.05) || g < 0.06 ? 1 : 0; }
+    componentes(des, M.W, M.H, l => { if (l.length * M.mpp * M.mpp < 4) l.forEach(i => { des[i] = 0; }); });   // brillos sueltos en el bosque
+    for (let i = 0; i < N; i++) if (M.dentro[i]) { nin++; if (!isNaN(r[i])) { vin++; if (des[i]) alt++; } }
+    res = nin && vin / nin >= 0.6 ? { pct: alt / vin, cob: vin / nin } : { sin: true, cob: nin ? vin / nin : 0 };
+  }
+  CACHE_21.set(k, res); return res;
+}
+function texto21(g) {
+  if (!g || g.sin) return 'Google ene-2021: sin imagen en este sitio.';
+  const p = Math.round(g.pct * 100);
+  return 'Google ene-2021 (orientativo): ' + (p >= 30 ? `ya se veía intervenido cerca de ${p} % del trazo` : p >= 10 ? `se veía intervenido cerca de ${p} %, dudoso` : `casi no se veía intervenido (${p} %)`) +
+    (g.cob < 0.95 ? `; hay imagen en ${Math.round(g.cob * 100)} % del trazo` : '') + '.';
+}
+async function vegetacion(vertices, modo) {  // modo 'todo': deja solo arena, agua y suelo; 'arboles': quita solo copas
+  let M = await mosaicoGoogle('g26', 18, vertices, 2); if (!M) M = await mosaicoGoogle('g26', 17, vertices, 2); if (!M) return null;
+  const { W, H, dentro, mpp } = M, N = W * H, [r, v, b] = suavizar(M), m2px = mpp * mpp;
+  let veg = new Uint8Array(N);
+  if (modo === 'arboles') {
+    for (let i = 0; i < N; i++) veg[i] = dentro[i] && verdorDe(r[i], v[i]) >= 0.18 ? 1 : 0;
+    veg = morfo(morfo(veg, W, H, true), W, H, false);
+  } else {                                    // desnudo: amarillento o claro y sin verdor (calibrado: 0,1 % del bosque cae aquí)
+    let des = new Uint8Array(N);
+    for (let i = 0; i < N; i++) { if (isNaN(r[i])) continue; const g = verdorDe(r[i], v[i]), L = (r[i] + v[i] + b[i]) / 3; des[i] = (r[i] - b[i] > 4 && g < 0.07) || (L > 150 && g < 0.05) ? 1 : 0; }
+    des = morfo(morfo(des, W, H, true), W, H, false);
+    componentes(des, W, H, l => { if (l.length * m2px < 4) l.forEach(i => { des[i] = 0; }); });   // brillos sueltos en el bosque
+    for (let i = 0; i < N; i++) veg[i] = dentro[i] && !isNaN(r[i]) && !des[i] ? 1 : 0;
+  }
+  for (let i = 0; i < N; i++) if (!dentro[i]) veg[i] = 0;
+  const minimo = modo === 'arboles' ? 15 : 4;  // m²: lo menor no se quita
+  componentes(veg, W, H, l => { if (l.length * m2px < minimo) l.forEach(i => { veg[i] = 0; }); });
+  const hueco = new Uint8Array(N); for (let i = 0; i < N; i++) hueco[i] = dentro[i] && !veg[i] ? 1 : 0;
+  componentes(hueco, W, H, l => { if (l.length * m2px < minimo && l.every(i => { const x = i % W; return dentro[i - 1] && dentro[i + 1] && dentro[i - W] && dentro[i + W] && x > 0 && x < W - 1; })) l.forEach(i => { veg[i] = 1; }); });
+  let nin = 0, nveg = 0, manchas = 0; for (let i = 0; i < N; i++) { if (dentro[i]) nin++; if (veg[i]) nveg++; }
+  componentes(veg, W, H, () => { manchas++; });
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H; const g = cv.getContext('2d'), im = g.createImageData(W, H);
+  for (let i = 0; i < N; i++) if (veg[i]) { im.data[i * 4] = 255; im.data[i * 4 + 1] = 0; im.data[i * 4 + 2] = 255; im.data[i * 4 + 3] = 165; }
+  g.putImageData(im, 0, 0);
+  return { frac: nin ? nveg / nin : 0, manchas, modo, z: M.Z, url: cv.toDataURL('image/png'),
+    bounds: [[mercLat(M.Y0 + H, M.Z), mercLon(M.X0, M.Z)], [mercLat(M.Y0, M.Z), mercLon(M.X0 + W, M.Z)]] };
+}
+let VEG = null, VEG_PROP = null;
+const capaVeg = L.layerGroup().addTo(map);
+async function proponerVeg(vertices, areaM2, alAceptar, modo = 'todo') {   // muestra en morado lo que se quitaría; Fabio acepta o descarta
+  $('vegTxt').innerHTML = 'Buscando vegetación en la imagen de Google…'; $('bVegSi').style.display = 'none'; $('pVeg').classList.add('abierto');
+  let r = null; try { r = await vegetacion(vertices, modo); } catch (e) { r = null; }
+  capaVeg.clearLayers();
+  if (!r) { $('vegTxt').innerHTML = 'No hay imagen de Google 2026 en este sitio dentro del teléfono.'; return; }
+  L.imageOverlay(r.url, r.bounds, { interactive: false }).addTo(capaVeg);
+  const q = areaM2 * r.frac, seg = `<div class="seg" id="vegModo" style="margin:8px 0"><button data-m="todo" class="${modo === 'todo' ? 'on' : ''}">Toda la vegetación</button><button data-m="arboles" class="${modo === 'arboles' ? 'on' : ''}">Solo árboles</button></div>`;
+  $('vegTxt').innerHTML = seg + (r.manchas ? `<b>En morado, lo que se quitaría:</b> ${haTxt(q)} en ${r.manchas} mancha(s).<br>Área: ${haTxt(areaM2)} → <b>${haTxt(areaM2 - q)}</b>${r.z < 18 ? ' <i>(con la imagen de menos detalle)</i>' : ''}.<br><span class="nota">${modo === 'todo' ? 'Deja solo arena, agua y suelo. El rastrojo de huecos viejos también es área intervenida: si lo quita, la anterioridad queda por lo bajo.' : 'Quita solo copas de árboles; deja rastrojo y vegetación baja.'}</span>` : 'No encontré vegetación para quitar dentro del trazo.');
+  $('vegModo').onclick = e => { const m = e.target.dataset.m; if (m && m !== modo) proponerVeg(vertices, areaM2, alAceptar, m); };
+  VEG_PROP = { r, alAceptar }; $('bVegSi').style.display = r.manchas ? '' : 'none';
+}
+/* ---------------- anterioridad: Sentinel por frente; equipos, inicio y escala por minero ---------------- */
 const CAUDAL = { 2: 20, 3: 45, 4: 80, 6: 180, 8: 320 };   // m³/h de agua por motobomba según pulgadas: orden de magnitud
 const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
-const CAMPOS = ['cProf', 'cBombas', 'cPulg', 'cCaudal', 'cRel', 'cHoras', 'cDias', 'cParAnual', 'cParPost', 'cParPre', 'cManif', 'cInicio', 'cA1', 'cImg', 'cCorte', 'cVisita'];
+const EQUIPO = ['cBombas', 'cBombasHoy', 'cPulg', 'cCaudal', 'cRel', 'cHoras', 'cDias', 'cManif', 'cSemClima', 'cInicio', 'cCorte', 'cVisita'];
+const EQ_BASE = { cBombas: 1, cBombasHoy: 1, cPulg: 4, cCaudal: 80, cRel: 15, cHoras: 8, cDias: 6, cManif: '', cSemClima: 0, cInicio: '', cCorte: '2023-08-15', paradas: [] };
+const PROF = 3, DIA = 86400000, UMBRAL = 165000, CORTE = '2023-08-15';
 let CALC = null, RESUMEN = '';
+const CACHE_S = new Map();
 const hoyISO = () => { const d = new Date(), z = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}`; };
-const num = id => parseFloat(String($(id).value).replace(',', '.')) || 0;
-const paramsCalc = () => Object.fromEntries(['cArea', ...CAMPOS].map(id => [id, $(id).value]));
-async function abrirCalc(trazo) {            // desde un área, o desde «Guardado» con la suma de las áreas del filtro
-  CALC = { trazo: trazo || null };
-  const base = { cProf: 4, cBombas: 1, cPulg: 4, cCaudal: 80, cRel: 15, cHoras: 8, cDias: 6, cParAnual: 1, cParPost: 0, cParPre: 0, cManif: '', cImg: '2023-07-12', cCorte: '2023-08-15' };
-  const v = { ...base, ...((await metaGet('calcUltimo')) || {}), ...((trazo && trazo.calc && trazo.calc.params) || {}) };
-  if (!(trazo && trazo.calc)) { v.cVisita = hoyISO(); v.cA1 = ''; v.cInicio = v.cInicio || ''; }
-  CAMPOS.forEach(id => { $(id).value = v[id] ?? ''; });
-  if (!$('cImg').value) $('cImg').value = '2023-07-12';
-  const ha = m2 => dec(m2 / 10000, 2);
-  let polys = [];
-  if (trazo) { $('cArea').value = (trazo.area_m2 / 10000).toFixed(2); $('cOrigen').textContent = `${rotulo(trazo)} · ${trazo.upm}${trazo.medicion ? ' · ' + trazo.medicion : ''}`; if (trazo.que !== HUELLA) polys = [trazo.vertices]; }
-  else {                                     // áreas del minero filtrado: las de hoy (campo + imagen) y aparte la huella anterior al corte
-    const ts = (await trazosTodos()).filter(t => t.tipo === 'area' && pasaFiltro(t));
-    const hoy = ts.filter(t => t.que !== HUELLA), hu = ts.filter(t => t.que === HUELLA), suma = l => l.reduce((a, t) => a + t.area_m2, 0);
-    const campo = suma(hoy.filter(t => t.medicion === MEDICION[0])), img = suma(hoy.filter(t => t.medicion === MEDICION[1])), otro = suma(hoy) - campo - img;
-    $('cArea').value = (suma(hoy) / 10000).toFixed(2); if (hu.length) $('cA1').value = (suma(hu) / 10000).toFixed(2); polys = hoy.map(t => t.vertices);
-    $('cOrigen').textContent = hoy.length || hu.length
-      ? `${FILTRO === TODOS ? 'Todas las áreas' : FILTRO}: hoy ${ha(suma(hoy))} ha (${ha(campo)} en campo + ${ha(img)} sobre imagen${otro > 0 ? ' + ' + ha(otro) + ' sin dato' : ''})` + (hu.length ? ` · huella anterior al corte ${ha(suma(hu))} ha` : '') + '. Puede cambiarlas.'
-      : 'Escriba el área intervenida en hectáreas.';
-  }
-  $('bCGuardar').style.display = trazo ? '' : 'none';
-  CALC.sent = null; CALC.autoA1 = !$('cA1').value; $('cSent').style.display = 'none'; abrir('pCalc'); calcular();
-  if (polys.length) { try { CALC.sent = relativoSentinel(await cargarNDVI(), polys); } catch (e) { CALC.sent = { error: true }; } calcular(); }
+const nv = v => parseFloat(String(v ?? '').replace(',', '.')) || 0;
+const num = id => nv($(id).value);
+const fmes = d => `${MESES[d.getMonth()]}-${d.getFullYear()}`;
+const mesISO = s => s ? new Date(s + '-01T00:00') : null;
+const fmesISO = s => s ? fmes(mesISO(s)) : '';
+const isoMes = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+function paradoDias(P, a, b) {             // días de paradas puntuales con fecha que caen entre a y b
+  let s = 0;
+  (P || []).forEach(p => { if (!p.mes || !(nv(p.semanas) > 0)) return; const i = mesISO(p.mes), f = new Date(+i + nv(p.semanas) * 7 * DIA); s += Math.max(0, Math.min(+f, +b) - Math.max(+i, +a)) / DIA; });
+  return s;
+}
+const sinFecha = P => (P || []).filter(p => !p.mes && nv(p.semanas) > 0).reduce((a, p) => a + nv(p.semanas) * 7, 0);   // días de paradas sin fecha
+function inicioDesde(fin, dias, P) {         // inicio para «dias» de calendario trabajando antes de fin, más las paradas puntuales que caigan en medio
+  if (!(dias > 0) || !isFinite(dias)) return null;
+  const extra = sinFecha(P); let ini = new Date(fin - (dias + extra) * DIA);
+  for (let k = 0; k < 30; k++) { const n = new Date(fin - (dias + extra + paradoDias(P, ini, fin)) * DIA); const listo = Math.abs(n - ini) < DIA; ini = n; if (listo) break; }
+  return ini.getFullYear() < 1950 ? null : ini;
+}
+const paradasTxt = P => (P || []).filter(p => nv(p.semanas) > 0).map(p => `${p.mes ? fmesISO(p.mes) : 'sin fecha'} · ${dec(nv(p.semanas), 1)} semanas${p.causa ? ' · ' + p.causa : ''}`).join('; ');
+const sinHtml = s => s.replace(/<br>/g, ' ').replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
+function difTxt(dice, calc) {                // cuánto antes o después del calculado está el inicio que dice
+  const m = Math.round((calc - dice) / DIA / 30.44);
+  if (m === 0) return 'igual al calculado';
+  const t = Math.abs(m) >= 24 ? `${dec(Math.abs(m) / 12, 1)} años` : `${Math.abs(m)} mes${Math.abs(m) === 1 ? '' : 'es'}`;
+  return m > 0 ? `${t} antes que el calculado` : `${t} después del calculado`;
+}
+async function equiposDe(upm) {              // equipos anotados del minero, o los predeterminados
+  const e = ((await metaGet('equipos')) || {})[upm], corte = ((await metaGet('calcUltimo')) || {}).cCorte;
+  return { ...EQ_BASE, ...(corte ? { cCorte: corte } : {}), cVisita: hoyISO(), ...(e || {}), guardado: !!e };
+}
+async function equiposGuardar(upm, eq) {
+  const todos = (await metaGet('equipos')) || {}; const { guardado, ...v } = eq;
+  todos[upm] = { ...v, fecha: fechaLocal(new Date()) }; await metaSet('equipos', todos);
+}
+const trazoGet = id => tx('trazos', 'readonly', s => s.get(id));
+async function sentDe(t) {                   // Sentinel del frente; se recalcula solo si cambia el trazo
+  const k = t.id + ':' + t.vertices.length + ':' + t.area_m2;
+  if (CACHE_S.has(k)) return CACHE_S.get(k);
+  let st; try { st = relativoSentinel(await cargarNDVI(), [t.vertices]); } catch (e) { st = { error: true }; }
+  CACHE_S.set(k, st); return st;
+}
+function evalSent(st, A) {                   // ✓ ✗ ? y área ya intervenida en jul-2023 con el límite bajo del margen («al menos»)
+  const ok = st && !st.error && !st.fuera && !st.sinAnillo && st.R != null && st.alt >= 15;
+  if (!ok) return { est: 'nc', A23: 0 };
+  return { est: st.Rmin >= 0.10 ? 'si' : st.Rmax < 0.10 ? 'no' : 'duda', A23: A * Math.max(0, st.Rmin) };
+}
+const SIMB = { si: '<b class="si">✓</b>', no: '<b class="no">✗</b>', duda: '<b>?</b>', nc: '<b>?</b>' };
+const EST_T = { si: 'sí', no: 'no', duda: 'dudoso', nc: 'no concluyente' };
+function textoEst(f) {
+  const p = f.A > 0 ? Math.round(f.A23 / f.A * 100) : 0;
+  if (f.est === 'si') return `${SIMB.si} Ya estaba intervenido en jul-2023: al menos ${dec(f.A23 / 10000, 2)} ha (${p} %)`;
+  if (f.est === 'no') return `${SIMB.no} Se abrió después de jul-2023: Sentinel ve solo ${Math.round(f.st.R * 100)} % ya alterado`;
+  if (f.est === 'duda') return `${SIMB.duda} Dudoso: Sentinel ve entre ${Math.round(f.st.Rmin * 100)} y ${Math.round(f.st.Rmax * 100)} % ya alterado en jul-2023`;
+  return `${SIMB.nc} Sentinel no es concluyente (frente pequeño o angosto, o sin bosque de referencia): use la imagen de alta resolución y lo visto en campo`;
+}
+async function frentesDe(upm, incluir) {     // frentes del minero (activos e inactivos) con su resultado de Sentinel
+  const ts = (await trazosTodos()).filter(t => esFrente(t) && t.upm === upm);
+  if (incluir && !ts.some(t => t.id === incluir.id)) ts.push(incluir);
+  ts.sort((a, b) => (a.frente_n || 99) - (b.frente_n || 99));
+  const out = []; for (const t of ts) out.push({ t, st: await sentDe(t) }); return out;
+}
+const profGuardada = t => (t.ant && t.ant.prof) || PROF;
+function analizar(frs, eq, profDe = profGuardada) {
+  const fecha = (s, def) => { const d = new Date((s || def) + 'T00:00'); return isNaN(d) ? new Date(def + 'T00:00') : d; };
+  const corte = fecha(eq.cCorte, CORTE), visita = fecha(eq.cVisita, hoyISO());
+  const T = Math.max(0.01, (visita - corte) / DIA / 365.25);
+  const sem = Math.min(51, nv(eq.cSemClima)), fac = Math.min(7, nv(eq.cDias)) / 7 * (1 - sem / 52), P = eq.paradas || [];   // fracción del calendario que trabaja
+  const porHora = nv(eq.cCaudal) / (nv(eq.cRel) || 15), rBomba = porHora * nv(eq.cHoras);      // m³ de grava por bomba: por hora y por día
+  const capProm = nv(eq.cBombas) * rBomba * 365.25 * fac, capHoy = nv(eq.cBombasHoy) * rBomba * 365.25 * fac;   // m³/año
+  const F = frs.map(({ t, st }) => {
+    const A = t.area_m2, h = profDe(t), e = evalSent(st, A), V = A * h, Vn = (A - e.A23) * h;
+    const inactivo = t.estado === 'Inactivo', fin = inactivo && t.parado_desde ? mesISO(t.parado_desde) : visita;
+    const ini = capProm > 0 && V > 0 ? inicioDesde(fin, V / capProm * 365.25, P) : null;   // a más tardar: todos los equipos solo en este frente
+    return { t, st, A, h, V, Vn, fin, ini, inactivo, ...e };
+  });
+  const S = k => F.reduce((a, f) => a + f[k], 0);
+  const A = S('A'), A23 = S('A23'), V = S('V'), Vn = S('Vn'), nAct = F.filter(f => !f.inactivo).length;
+  const fin = nAct || !F.length ? visita : new Date(Math.max(...F.map(f => +f.fin)));
+  const ini = capProm > 0 && V > 0 ? inicioDesde(fin, V / capProm * 365.25, P) : null;   // todo el volumen de sus frentes con sus equipos promedio
+  const iniM = mesISO(eq.cInicio), hMed = A > 0 ? V / A : PROF;
+  const capPost = capProm * Math.max(0, (Math.max(fin, corte) - corte) / DIA - paradoDias(P, corte, fin)) / 365.25;   // m³ que pudo mover después del corte
+  const AmaxPost = Math.min(A, capPost / hMed);
+  let hNec = null, diasTrab = 0;
+  if (iniM && iniM < fin && porHora > 0 && nv(eq.cBombas) > 0 && fac > 0 && V > 0) { diasTrab = Math.max(1, (fin - iniM) / DIA - paradoDias(P, iniM, fin) - sinFecha(P)) * fac; hNec = V / (nv(eq.cBombas) * porHora) / Math.max(1, diasTrab); }
+  return { F, A, A23, V, Vn, T, fac, sem, rBomba, capProm, capHoy, corte, visita, fin, ini, iniM, hMed, capPost, AmaxPost, AeqPre: A - AmaxPost, hNec, diasTrab,
+    nAct, nIn: F.length - nAct, nSi: F.filter(f => f.est === 'si').length,
+    prodHoy: nAct || !F.length ? capHoy : 0, prodDice: nv(eq.cManif) * 365.25 * fac, prodObs: Vn / T };
+}
+function htmlMinero(upm, R, eq, corto) {     // resumen del minero: una línea (ficha) o completo (Guardado y calculadora)
+  const ha = m2 => dec(m2 / 10000, 2), p = R.A > 0 ? Math.round(R.A23 / R.A * 100) : 0, nF = R.F.length;
+  if (!nF) return `<b>${esc(upm)}</b>: sin frentes dibujados. Dibuje sus frentes, activos e inactivos, y márquelos como frente.`;
+  const fr = `${nF} frente${nF > 1 ? 's' : ''} (${R.nAct} activo${R.nAct === 1 ? '' : 's'}, ${R.nIn} inactivo${R.nIn === 1 ? '' : 's'})`;
+  const ant = `al menos <b>${ha(R.A23)} de ${ha(R.A)} ha</b> ya intervenidas en jul-2023 (${p} %)`;
+  const ini = R.ini ? `inicio calculado <b>${fmes(R.ini)}</b> ` + (R.ini < R.corte ? '<b class="si">antes del corte</b>' : '<b class="no">después del corte</b>') : 'inicio calculado: faltan equipos';
+  const dice = R.iniM ? ` · dice ${fmes(R.iniM)}` + (R.ini ? ` (${difTxt(R.iniM, R.ini)})` : '') : ' · inicio manifestado sin dato';
+  const sinEq = eq.guardado ? '' : ' <i>Equipos sin anotar: valores por defecto.</i>';
+  const alerta = R.iniM && R.iniM < R.corte && !R.F.some(f => f.est === 'si') && R.F.some(f => f.est === 'no')
+    ? `<div class="alerta">⚠ Dice que empezó en ${fmes(R.iniM)}, pero sus frentes dibujados se abrieron después de jul-2023: la anterioridad tendría que salir de otros frentes o de otra prueba.</div>` : '';
+  if (corto) return `<b>${esc(upm)}</b> · ${fr} · ${ant} · ${ini}${dice}.${sinEq}${alerta}`;
+  const top = Math.max(R.prodHoy, R.prodDice, R.prodObs);
+  const escala = `<b>Escala:</b> hoy ${miles(R.prodHoy)} m³/año con ${dec(nv(eq.cBombasHoy), 1)} motobomba(s)` + (R.nAct ? '' : ' (no tiene frentes activos dibujados)') +
+    (R.prodDice > 0 ? ` · lo que dice ${miles(R.prodDice)}` : '') + ` · observado desde el corte ${miles(R.prodObs)} (mínimo, con todos sus frentes) → ` +
+    (top > UMBRAL ? '<b class="no">supera 165.000 m³/año</b>' : '<b class="si">bajo 165.000 m³/año</b>');
+  const lista = R.F.map(f => `${esc(f.t.codigo || '')}${f.inactivo ? ' (inactivo)' : ''} ${SIMB[f.est]} ${f.est === 'nc' ? 'no concluyente' : Math.round(f.A23 / f.A * 100) + ' %'}`).join(' · ');
+  const sinProf = R.F.filter(f => !(f.t.ant && f.t.ant.prof) && !(CALC && CALC.trazo && CALC.trazo.id === f.t.id)).length;
+  return `<b>${esc(upm)}</b> · ${fr} · ${ha(R.A)} ha<br><b>Anterioridad:</b> ${ant}; ${R.nSi} de ${nF} frente${nF > 1 ? 's' : ''} con ✓.<br>` +
+    `${ini.charAt(0).toUpperCase() + ini.slice(1)}${dice}.<br>${escala}.<br><span class="nota">Frentes: ${lista}` +
+    (sinProf ? `<br>${sinProf} frente(s) sin guardar usan ${PROF} m de profundidad.` : '') + (paradasTxt(eq.paradas) ? `<br>Paradas puntuales: ${esc(paradasTxt(eq.paradas))}.` : '') + `</span>${sinEq}${alerta}`;
+}
+async function abrirCalc(trazo) {            // desde un frente, o desde «Guardado» para todos los frentes del minero filtrado
+  if (!trazo && FILTRO === TODOS) { avisar('Elija primero un minero en la barra de abajo'); return; }
+  const upm = trazo ? trazo.upm : FILTRO, eq = await equiposDe(upm);
+  CALC = { trazo: trazo || null, upm, eq, frs: null };
+  EQUIPO.forEach(id => { $(id).value = eq[id] ?? ''; }); pintarParadas(eq.paradas || []);
+  $('cTitMin').textContent = `Equipos de ${upm}`;
+  $('cEqNota').textContent = eq.guardado ? `Ya anotados el ${String(eq.fecha || '').slice(0, 10)}: vienen precargados para todos sus frentes. Corrobórelos con él y corrija lo que cambie.` : 'Valen para todos sus frentes, activos e inactivos. Se anotan una vez y quedan precargados.'; $('cFrente').style.display = trazo ? '' : 'none';
+  $('cSent').style.display = 'none'; $('cResFrente').innerHTML = ''; $('cInicioCalc').value = '…';
+  $('cRes').innerHTML = '<p class="nota">Calculando con Sentinel…</p>';
+  if (trazo) {
+    $('cArea').value = dec(trazo.area_m2 / 10000, 2); $('cProf').value = profGuardada(trazo); $('cA1').value = '…'; $('cNueva').value = '…';
+    $('cOrigen').innerHTML = `${esc(rotulo(trazo))} · ${esc(upm)} · ${esc(queTxt(trazo).toLowerCase())}${trazo.medicion ? ' · ' + esc(trazo.medicion) : ''}`;
+  } else $('cOrigen').innerHTML = `${esc(upm)}: todos sus frentes, activos e inactivos.`;
+  abrir('pCalc');
+  CALC.frs = await frentesDe(upm, trazo); CALC.g21 = null; calcular();
+  if (trazo) { try { CALC.g21 = await verde21(trazo.vertices); } catch (e) {} calcular(); }
+}
+function pintarParadas(P) {                 // filas de paradas puntuales: mes y año, semanas y por qué
+  const c = $('cParadas'); c.innerHTML = '';
+  P.forEach(p => agregarParada(p));
+}
+function agregarParada(p = {}) {
+  const d = document.createElement('div'); d.className = 'parada';
+  d.innerHTML = `<input type="month" aria-label="Desde (mes y año)"><input inputmode="decimal" placeholder="semanas" aria-label="Semanas"><button aria-label="Quitar parada">×</button><input class="causa" placeholder="por qué: paro, operativo, daño, combustible…" aria-label="Causa">`;
+  const [m, s, , c] = d.children; m.value = p.mes || ''; s.value = p.semanas ?? ''; c.value = p.causa || '';
+  d.querySelector('button').onclick = () => { d.remove(); calcular(); };
+  $('cParadas').appendChild(d);
+}
+const leerParadas = () => [...$('cParadas').children].map(d => ({ mes: d.children[0].value, semanas: d.children[1].value, causa: d.children[3].value.trim() })).filter(p => p.mes || nv(p.semanas) > 0 || p.causa);
+const eqForm = () => ({ ...Object.fromEntries(EQUIPO.map(id => [id, $(id).value])), paradas: leerParadas(), guardado: CALC.eq.guardado });
+function cajaSentinel(st, A) {               // detalle del método relativo para el frente abierto
+  const fm = f => { const [y, mo, dd] = f.split('-'); return `${+dd}-${MESES[+mo - 1]}-${y}`; }, ha = m2 => dec(m2 / 10000, 2);
+  let t = `<b>Calculado automáticamente con Sentinel</b>${st.fecha23 ? ` (${fm(st.fecha23)} frente a ${fm(st.fecha26)})` : ''}<br><span class="nota">Lo que es minería lo define tu trazo en Google; Sentinel solo compara ese mismo sitio en las dos fechas contra el bosque de alrededor.</span><br>`;
+  if (st.error) return t + 'No se pudieron leer las imágenes de Sentinel.';
+  if (st.fuera) return t + 'El área está fuera de la zona con datos de Sentinel.';
+  if (st.sinAnillo) return t + 'No hay bosque alrededor para tomar como referencia (nubes o borde de la zona).';
+  if (st.R == null || st.alt < 15) return t + `Dentro del área, Sentinel ve alterados en 2026 solo ${st.alt} de ${st.n} píxeles de 10 m: frente muy angosto o pequeño para Sentinel. No es concluyente; use la alta resolución y lo visto en campo.`;
+  return t + `<table class="tsent"><tr><td>Área en Google 2026 (lo trazado)</td><td><b>${ha(A)} ha</b></td></tr>` +
+    `<tr><td>Píxeles de 10 m dentro · alterados en 2026</td><td>${st.n} · ${st.alt} (${Math.round(st.alt / st.n * 100)} %)</td></tr>` +
+    `<tr><td>Bosque de referencia (NDVI) 2023 · 2026</td><td>${dec(st.f23, 2)} · ${dec(st.f26, 2)}</td></tr>` +
+    `<tr><td>Ya alterado en jul-2023 (valor central)</td><td>${Math.round(st.R * 100)} % → ${ha(A * st.R)} ha</td></tr>` +
+    `<tr><td>Margen (desfase de 10 m y bordes)</td><td>${Math.round(st.Rmin * 100)}–${Math.round(st.Rmax * 100)} %</td></tr>` +
+    `<tr><td>Se toma el límite bajo: al menos</td><td><b class="si">${ha(A * Math.max(0, st.Rmin))} ha</b></td></tr></table>` +
+    (st.Rmax - st.Rmin > 0.2 ? '<b class="no">Margen amplio:</b> área pequeña o angosta para Sentinel; tómelo con cautela.<br>' : '') +
+    (Math.abs(st.f23 - st.f26) > 0.05 ? '<b class="no">El bosque de referencia cambió entre fechas:</b> tómelo con cautela.' : '');
 }
 function calcular() {
-  const A = num('cArea') * 10000, h = num('cProf'), rel = num('cRel') || 15, dps = Math.min(7, num('cDias')), mpa = Math.min(11.9, num('cParAnual'));
-  const DIA = 86400000, MES = 30.44, fac = dps / 7 * (1 - mpa / 12);
-  const corte = new Date($('cCorte').value + 'T00:00'), visita = new Date($('cVisita').value + 'T00:00'), entre = (visita - corte) / DIA;
-  const calPost = Math.max(0, entre - num('cParPost') * MES), Dpost = calPost * fac;
-  const V = A * h, rBomba = num('cCaudal') / rel * num('cHoras');
-  const esc_ = [['Según equipos', num('cBombas') * rBomba]]; if (num('cManif') > 0) esc_.push(['Según lo manifestado', num('cManif')]);
-  const fmes = d => `${MESES[d.getMonth()]}-${d.getFullYear()}`;
-  let html = `<div class="caja"><b>Volumen removido:</b> ${miles(V)} m³ (${dec(A / 10000, 2)} ha × ${dec(h, 1)} m)<br><b>Tiempo desde el corte:</b> ${dec(entre / 365.25, 1)} años · ${miles(Dpost)} días de trabajo</div>`;
-  // al revés: horas de bombeo al día que harían falta para abrir el área desde el inicio manifestado
-  let lineaInicio = '';
-  const ini = $('cInicio').value ? new Date($('cInicio').value + '-01T00:00') : null, porHora = num('cBombas') * num('cCaudal') / rel;
-  if (ini && ini < visita && porHora > 0 && V > 0 && fac > 0) {
-    const calIni = (visita - ini) / DIA, diasTrab = Math.max(1, (calIni - (num('cParPre') + num('cParPost')) * MES) * fac);
-    const hNec = V / porHora / diasTrab, prom = V / (calIni / 365.25);
-    let juicio = hNec <= 10 ? '<b class="si">cuadra con lo manifestado</b>' : hNec <= 16 ? '<b>exigente: confirme turnos y equipos</b>'
+  if (!CALC || !CALC.frs) return;
+  const eq = eqForm(), tr = CALC.trazo, upm = CALC.upm, ha = m2 => dec(m2 / 10000, 2);
+  const R = analizar(CALC.frs, eq, t => tr && t.id === tr.id ? num('cProf') : profGuardada(t)); CALC.R = R;
+  const lineas = [`Cálculo de anterioridad (estimado) · ${upm} · ${fechaLocal(new Date()).slice(0, 16)}`,
+    'Fuentes: áreas trazadas sobre Google y en campo (evidenciado); proporción ya intervenida en julio de 2023 calculada con Sentinel-2, con el límite bajo del margen; equipos, régimen, paradas, inicio y producción, manifestados salvo que se hayan visto; inicio calculado, capacidad y escala, calculados por la ANM.'];
+  $('cInicioCalc').value = R.ini ? fmes(R.ini) : '—';
+  if (tr) {
+    const f = R.F.find(x => x.t.id === tr.id);
+    $('cA1').value = f.est === 'nc' ? 'no concluyente' : ha(f.A23); $('cNueva').value = ha(f.A - f.A23);
+    $('cSent').innerHTML = cajaSentinel(f.st, f.A); $('cSent').style.display = '';
+    let h = `<div class="caja calc">${textoEst(f)}.<br>Volumen del frente: ${miles(f.V)} m³ (${ha(f.A)} ha × ${dec(f.h, 1)} m).<br>`;
+    h += f.ini ? `Inicio de este frente: <b>a más tardar ${fmes(f.ini)}</b> ${f.ini < R.corte ? '<b class="si">antes del corte</b>' : '<b class="no">después del corte</b>'}, si todos sus equipos hubieran trabajado solo aquí${f.inactivo && f.t.parado_desde ? ' hasta ' + fmesISO(f.t.parado_desde) : ''}.` : 'Inicio de este frente: faltan los equipos.';
+    if (f.est === 'no' && f.ini && f.ini < R.corte) h += '<br><b class="no">No cuadra:</b> Sentinel lo ve abierto después de jul-2023, pero con los equipos anotados no alcanzaba a abrirlo en ese tiempo. Pregunte si tuvo más equipos o si el corte es menos hondo.';
+    if (f.est === 'si' && f.ini && f.ini >= R.corte) h += '<br>El cálculo con equipos solo da una fecha límite; la imagen de jul-2023 es evidencia directa y es la que vale.';
+    if (CALC.g21) h += '<br>' + texto21(CALC.g21);
+    const al = alertasFrente(tr, f.st, f.A, eq.cCorte);
+    $('cResFrente').innerHTML = h + '</div>' + al.map(a => `<div class="alerta">⚠ ${esc(a)}</div>`).join('');
+    lineas.push(`Frente ${tr.codigo || ''} (${queTxt(tr).toLowerCase()}): ${ha(f.A)} ha trazadas. ` + sinHtml(textoEst(f)) +
+      (f.st && f.st.R != null && f.est !== 'nc' ? ` (Sentinel ${f.st.fecha23} frente a ${f.st.fecha26}, método relativo al bosque de alrededor; valor central ${Math.round(f.st.R * 100)} %, margen ${Math.round(f.st.Rmin * 100)}–${Math.round(f.st.Rmax * 100)} %).` : '.') +
+      ` Profundidad ${dec(f.h, 1)} m, volumen ${miles(f.V)} m³.` + (f.ini ? ` Inicio de este frente a más tardar ${fmes(f.ini)}.` : '') + (CALC.g21 ? ' ' + texto21(CALC.g21) : '') +
+      (tr.veg_m2 ? ` Área trazada ${ha(tr.area_trazada_m2)} ha, sin ${ha(tr.veg_m2)} ha de vegetación detectada en Google.` : ''));
+  }
+  let h = `<div class="caja calc">${htmlMinero(upm, R, eq, false)}</div>`;
+  if (R.F.length && R.capProm > 0) {
+    h += `<div class="caja calc"><b>Lo abierto después del corte frente a sus equipos:</b><br>Con ${dec(nv(eq.cBombas), 1)} motobomba(s) en promedio mueve unos ${miles(R.capProm)} m³/año (${miles(R.rBomba)} m³/día por bomba, ${dec(R.fac * 7, 1)} días efectivos por semana).<br>` +
+      `Área nueva desde jul-2023 en todos sus frentes, activos e inactivos: ${ha(R.A - R.A23)} ha → ${miles(R.Vn)} m³. Sus equipos alcanzaban unos ${miles(R.capPost)} m³ desde el corte.<br>` +
+      (R.Vn > R.capPost * 1.2 ? '<b class="no">Abrió más de lo que sus equipos explican:</b> pregunte por otros equipos, otros frentes o terceros.' : '<b class="si">Coherente con sus equipos.</b>') +
+      (R.AeqPre > 500 && R.Vn <= R.capPost * 1.2 ? `<br>Por equipos, después del corte pudo abrir como máximo ${ha(R.AmaxPost)} ha: al menos ${ha(R.AeqPre)} ha tendrían que ser anteriores. Sirve sobre todo donde Sentinel no es concluyente.` : '') + '</div>';
+  }
+  if (R.hNec != null) {
+    let juicio = R.hNec <= 10 ? '<b class="si">cuadra con lo que dice</b>' : R.hNec <= 16 ? '<b>exigente: confirme turnos y equipos</b>'
       : '<b class="no">no alcanza: pregunte por equipos anteriores, otros frentes, un inicio más antiguo o área de terceros</b>';
-    if (ini >= corte) juicio = '<b class="no">el inicio manifestado es posterior al corte</b>; ' + juicio;
-    html += `<div class="caja calc"><b>Con el inicio manifestado (${fmes(ini)}):</b> habrían tenido que bombear <b>${dec(hNec, 1)} h al día</b> en ${miles(diasTrab)} días de trabajo; ${juicio}.<br>` +
-      `Producción promedio desde el inicio: ${miles(prom)} m³/año ${prom > 165000 ? '<b class="no">(supera 165.000)</b>' : '(umbral 165.000)'}</div>`;
-    lineaInicio = `Con el inicio manifestado (${fmes(ini)}) habrían tenido que bombear ${dec(hNec, 1)} h al día en ${miles(diasTrab)} días de trabajo; producción promedio ${miles(prom)} m³/año.`;
+    if (R.iniM >= R.corte) juicio = '<b class="no">el inicio que dice es posterior al corte</b>; ' + juicio;
+    h += `<div class="caja calc"><b>Con el inicio que dice (${fmes(R.iniM)}):</b> habría tenido que bombear <b>${dec(R.hNec, 1)} h al día</b> en ${miles(R.diasTrab)} días de trabajo; ${juicio}.</div>`;
   }
-  const lineas = [`Cálculo de anterioridad (estimado) · ${$('cOrigen').textContent}`, `Área ${dec(A / 10000, 2)} ha × profundidad ${dec(h, 1)} m = ${miles(V)} m³.`,
-    `Equipos: ${dec(num('cBombas'), 1)} motobomba(s) de chorro de ${$('cPulg').value}" (${miles(num('cCaudal'))} m³/h, ${dec(rel, 0)} m³ de agua por m³), ${dec(num('cHoras'), 1)} h/día, ${dec(dps, 1)} días/semana, ${dec(mpa, 1)} meses parados al año; otras paradas: ${dec(num('cParPre'), 1)} meses antes y ${dec(num('cParPost'), 1)} después del corte.`];
-  const st = CALC && CALC.sent, cs = $('cSent');
-  if (st) {
-    const fm = f => { const [y, mo, dd] = f.split('-'); return `${+dd}-${MESES[+mo - 1]}-${y}`; }, ha = m2 => dec(m2 / 10000, 2), celda = 0.00988;
-    let t = `<b>Calculado automáticamente con Sentinel</b>${st.fecha23 ? ` (${fm(st.fecha23)} frente a ${fm(st.fecha26)})` : ''}<br><span class="nota">Lo que es minería lo define tu trazo en Google; Sentinel solo compara ese mismo sitio en las dos fechas contra el bosque de alrededor.</span><br>`;
-    if (st.error) t += 'No se pudieron leer las imágenes de Sentinel.';
-    else if (st.fuera) t += 'El área está fuera de la zona con datos de Sentinel.';
-    else if (st.sinAnillo) t += 'No hay bosque alrededor para tomar como referencia (nubes o borde de la zona).';
-    else if (!(A > 0)) t += 'Falta el área de hoy.';
-    else if (st.R == null || st.alt < 15) t += `Dentro del área, Sentinel ve alterados en 2026 solo ${st.alt} de ${st.n} píxeles de 10 m: frente muy angosto o pequeño para Sentinel. No es concluyente; use la alta resolución y lo visto en campo.`;
-    else {
-      const a1s = A * st.R, rmin = st.Rmin, rmax = st.Rmax;
-      t += `<table class="tsent"><tr><td>Área en Google 2026 (lo trazado)</td><td><b>${ha(A)} ha</b></td></tr>` +
-        `<tr><td>Píxeles de 10 m dentro · alterados en 2026</td><td>${st.n} · ${st.alt} (${Math.round(st.alt / st.n * 100)} %)</td></tr>` +
-        `<tr><td>Sentinel distingue alterado en 2026</td><td>${dec(st.alt * celda, 2)} ha</td></tr>` +
-        `<tr><td>Bosque de referencia (NDVI) 2023 · 2026</td><td>${dec(st.f23, 2)} · ${dec(st.f26, 2)}</td></tr>` +
-        `<tr><td>Ya alterado en jul-2023</td><td><b class="si">${Math.round(st.R * 100)} % → ${ha(a1s)} ha</b></td></tr>` +
-        `<tr><td>Margen (desfase de 10 m y bordes)</td><td>${Math.round(rmin * 100)}–${Math.round(rmax * 100)} % → ${ha(A * rmin)}–${ha(A * rmax)} ha</td></tr>` +
-        `<tr><td>Nuevo después de jul-2023</td><td>${ha(A - a1s)} ha</td></tr></table>` +
-        (rmax - rmin > 0.2 ? '<b class="no">Margen amplio:</b> área pequeña o angosta para Sentinel; tómelo con cautela.<br>' : '') +
-        (Math.abs(st.f23 - st.f26) > 0.05 ? '<b class="no">El bosque de referencia cambió entre fechas:</b> tómelo con cautela.' : '');
-      lineas.push(`Calculado con Sentinel (${st.fecha23} frente a ${st.fecha26}, método relativo al bosque de alrededor): de ${ha(A)} ha trazadas en Google, ${st.alt} de ${st.n} píxeles de 10 m se ven alterados en 2026; ${Math.round(st.R * 100)} % de esa alteración ya estaba en julio de 2023 → ${ha(a1s)} ha anteriores al corte (margen ${Math.round(rmin * 100)}–${Math.round(rmax * 100)} %, ${ha(A * rmin)}–${ha(A * rmax)} ha).`);
-      if (CALC.autoA1) { $('cA1').value = (a1s / 10000).toFixed(2); $('cImg').value = '2023-07-12'; }
-    }
-    cs.innerHTML = t; cs.style.display = '';
-  }
-  // evidencia en imágenes: lo que ya estaba antes del corte es directo; lo nuevo da un ritmo mínimo
-  const A1 = num('cA1') * 10000, autoA1 = CALC && CALC.autoA1 && A1 > 0;
-  if (A1 > 0 && A > 0) {
-    const fImg = new Date($('cImg').value + 'T00:00'), anos = Math.max(0.1, (visita - fImg) / DIA / 365.25), nomImg = fImg.getFullYear() === 2021 ? '20-ene-2021' : '12-jul-2023';
-    const directa = Math.min(A1, A), nueva = Math.max(0, A - A1), ritmoM2 = nueva / anos, ritmoM3 = ritmoM2 * h;
-    const capacidad = num('cBombas') * rBomba * 365.25 * fac;
-    let alerta;
-    if (A1 > A * 1.05) alerta = '<b>El área de hoy es menor que la de la imagen:</b> revegetación o relleno; la evidencia es la imagen.';
-    else if (nueva < 0.10 * A) alerta = '<b class="si">Casi no creció:</b> trabajan sobre la misma área (profundización o retrabajo). Favorece la anterioridad; la escala se juzga con los equipos y lo manifestado.';
-    else if (capacidad > 0 && ritmoM3 > capacidad * 1.2) alerta = '<b class="no">Creció más de lo que sus equipos explican:</b> pregunte por otros equipos, frentes o terceros (F7).';
-    else alerta = capacidad > 0 ? '<b class="si">Coherente con sus equipos.</b>' : '';
-    let inicioImg = ritmoM2 > 0 && nueva >= 0.10 * A ? new Date(fImg - directa / ritmoM2 * 365.25 * DIA) : null;
-    if (inicioImg && inicioImg.getFullYear() < 1990) inicioImg = null;   // un ritmo muy bajo no permite estimar el inicio
-    html += `<div class="caja calc"><b>Según imágenes (evidenciado${autoA1 ? ', con el área antes del corte calculada con Sentinel' : ''}):</b><br>Anterior al corte por evidencia directa: <b>${dec(directa / 10000, 2)} ha (${Math.round(directa / A * 100)} %)</b>, imagen del ${nomImg}.<br>` +
-      `Área nueva desde esa imagen: ${dec(nueva / 10000, 2)} ha en ${dec(anos, 1)} años → ritmo <b>mínimo</b> de ${miles(ritmoM3)} m³/año (no ve profundización ni relleno).<br>` +
-      (inicioImg ? `Inicio orientativo con ese ritmo: ${fmes(inicioImg)}.<br>` : 'Inicio orientativo: no se estima, el área casi no creció.<br>') + alerta + `</div>`;
-    lineas.push(`Según imágenes (evidenciado): ${dec(directa / 10000, 2)} ha (${Math.round(directa / A * 100)} %) anteriores al corte por evidencia directa (imagen del ${nomImg}); área nueva ${dec(nueva / 10000, 2)} ha en ${dec(anos, 1)} años, ritmo mínimo ${miles(ritmoM3)} m³/año` + (inicioImg ? `; inicio orientativo ${fmes(inicioImg)}.` : '.'));
-  }
-  esc_.forEach(([nombre, R]) => {
-    if (!(R > 0) || !(V > 0) || !(fac > 0) || !(h > 0)) { html += `<div class="caja calc"><b>${nombre}:</b> faltan datos.</div>`; return; }
-    const Wd = V / R, cal = Wd <= Dpost ? Wd / fac + num('cParPost') * MES : entre + (Wd - Dpost) / fac + num('cParPre') * MES;
-    const inicio = new Date(visita - cal * DIA), anual = R * 365.25 * fac;
-    const Amax = Math.min(A, R * Dpost / h), Aprev = A - Amax, Rnec = Dpost > 0 ? V / Dpost : Infinity;
-    const veredicto = Aprev > 0.5 ? `<b class="si">Al menos ${dec(Aprev / 10000, 2)} ha (${Math.round(Aprev / A * 100)} %) tendrían que ser anteriores al corte.</b>`
-                                   : `<b class="no">Con estos datos toda el área pudo abrirse después del corte: no aporta a la anterioridad.</b>`;
-    html += `<div class="caja calc"><b>${nombre}:</b> ${miles(R)} m³/día · ${miles(anual)} m³/año ${anual > 165000 ? '<b class="no">(supera 165.000)</b>' : '(umbral 165.000)'}<br>` +
-      `Inicio estimado: <b>${fmes(inicio)}</b><br>Área máxima posible después del corte: ${dec(Amax / 10000, 2)} ha<br>${veredicto}<br>` +
-      `Para abrir toda el área después del corte habría hecho falta ${miles(Rnec)} m³/día` + (rBomba > 0 ? `, unas ${dec(Rnec / rBomba, 1)} motobombas de ${$('cPulg').value}" trabajando así.` : '.') + `</div>`;
-    lineas.push(`${nombre}: ${miles(R)} m³/día (${miles(anual)} m³/año). Inicio estimado ${fmes(inicio)}. Área máxima posible después del corte ${dec(Amax / 10000, 2)} ha; ` +
-      (Aprev > 0.5 ? `al menos ${dec(Aprev / 10000, 2)} ha (${Math.round(Aprev / A * 100)} %) anteriores al corte.` : 'toda el área pudo abrirse después del corte.') + ` Para abrirla toda después del corte: ${miles(Rnec)} m³/día.`);
-  });
-  if (lineaInicio) lineas.splice(3, 0, lineaInicio);
-  lineas.splice(1, 0, 'Fuentes: área y corte, evidenciados (en campo o mediante imagen); equipos, régimen, paradas, inicio y producción, manifestados salvo que se hayan visto; inicio estimado y áreas máximas, calculados por la ANM.');
-  $('cRes').innerHTML = html; RESUMEN = lineas.join('\n');
-
+  $('cRes').innerHTML = h;
+  lineas.push(sinHtml(htmlMinero(upm, R, eq, false)).replace(/ · Frentes:/, '. Frentes:'));
+  lineas.push(`Equipos (manifestados): ${dec(nv(eq.cBombas), 1)} motobomba(s) a la vez en promedio y ${dec(nv(eq.cBombasHoy), 1)} hoy, de ${eq.cPulg}" (${miles(nv(eq.cCaudal))} m³/h, ${dec(nv(eq.cRel) || 15, 0)} m³ de agua por m³), ${dec(nv(eq.cHoras), 1)} h/día, ${dec(nv(eq.cDias), 1)} días/semana; paradas: ${dec(nv(eq.cSemClima), 1)} semanas cada año por clima` + (paradasTxt(eq.paradas) ? `; puntuales: ${paradasTxt(eq.paradas)}.` : '.') +
+    (nv(eq.cManif) > 0 ? ` Producción que dice: ${miles(nv(eq.cManif))} m³/día.` : ''));
+  if (R.F.length && R.capProm > 0) lineas.push(`Inicio calculado ${R.ini ? fmes(R.ini) : 'sin estimar'} (volumen de todos sus frentes, ${miles(R.V)} m³, entre su capacidad promedio, ${miles(R.capProm)} m³/año). Área nueva desde jul-2023: ${ha(R.A - R.A23)} ha (${miles(R.Vn)} m³) frente a ${miles(R.capPost)} m³ que alcanzaban sus equipos: ` +
+    (R.Vn > R.capPost * 1.2 ? 'abrió más de lo que sus equipos explican.' : 'coherente.'));
+  if (R.hNec != null) lineas.push(`Con el inicio que dice (${fmes(R.iniM)}) habría tenido que bombear ${dec(R.hNec, 1)} h al día en ${miles(R.diasTrab)} días de trabajo.`);
+  RESUMEN = lineas.join('\n');
 }
-async function calcGuardar() {
-  const t = CALC && CALC.trazo; if (!t) return;
-  const nuevo = { ...t, calc: { params: paramsCalc(), resumen: RESUMEN, fecha: fechaLocal(new Date()) } };
-  await trazoGuardar(nuevo); CALC.trazo = nuevo; await metaSet('calcUltimo', paramsCalc()); await pintarTrazos(); avisar(`Cálculo guardado en ${rotulo(nuevo)}`);
+async function calcGuardar() {               // guarda los equipos del minero y, si viene de un frente, su profundidad y resultado
+  if (!CALC || !CALC.R) return;
+  const eq = eqForm(), tr = CALC.trazo; await equiposGuardar(CALC.upm, eq); CALC.eq.guardado = true;
+  await metaSet('calcUltimo', { cCorte: eq.cCorte });
+  let msg = `Equipos de ${CALC.upm} guardados`;
+  if (tr) {
+    const f = CALC.R.F.find(x => x.t.id === tr.id), fecha = fechaLocal(new Date()), st = f.st || {};
+    const nuevo = { ...((await trazoGet(tr.id)) || tr), ant: { prof: f.h, fecha, sentinel: f.est, area_ha: +(f.A / 10000).toFixed(2), al_menos_ha: +(f.A23 / 10000).toFixed(2),
+      pct: f.A > 0 ? Math.round(f.A23 / f.A * 100) : 0, R: st.R ?? null, Rmin: st.Rmin ?? null, Rmax: st.Rmax ?? null, inicio: f.ini ? isoMes(f.ini) : null }, calc: { resumen: RESUMEN, fecha } };
+    await trazoGuardar(nuevo); CALC.trazo = nuevo; CALC.frs = CALC.frs.map(x => x.t.id === nuevo.id ? { ...x, t: nuevo } : x);
+    msg = `Guardado en ${rotulo(nuevo)} y equipos de ${CALC.upm}`;
+  }
+  await pintarTrazos(); calcular(); avisar(msg);
 }
 async function calcCopiar() {
-  await metaSet('calcUltimo', paramsCalc());
   try { await navigator.clipboard.writeText(RESUMEN); avisar('Resumen copiado'); } catch (e) { avisar('No se pudo copiar'); }
 }
+async function fichaAnt(t, el, pop) {        // en la ficha del frente: su anterioridad guardada y una línea del minero
+  const eq = await equiposDe(t.upm), R = analizar(await frentesDe(t.upm, t), eq), f = R.F.find(x => x.t.id === t.id);
+  let h;
+  if (t.ant) {
+    h = `<b>Anterioridad</b> <span class="nota">(guardada ${esc(t.ant.fecha.slice(0, 16))})</span><br>${textoEst(f)}<br>` +
+      (f.ini ? `Inicio calculado: a más tardar <b>${fmes(f.ini)}</b>, ${f.ini < R.corte ? '<b class="si">antes de ago-2023</b>' : '<b class="no">después de ago-2023</b>'}<br>` : '') +
+      (R.iniM ? `Inicio manifestado: <b>${fmes(R.iniM)}</b>${f.ini ? ' (' + difTxt(R.iniM, f.ini) + ')' : ''}` : 'Inicio manifestado: sin dato');
+  } else h = `<b>Anterioridad sin guardar.</b> ${textoEst(f)}<br><span class="nota">Toque «Calcular anterioridad», revise la profundidad y los equipos, y guarde.</span>`;
+  let g21 = null; try { g21 = await verde21(t.vertices); } catch (e) {}
+  h += '<br>' + texto21(g21) + alertasFrente(t, f.st, f.A, eq.cCorte).map(a => `<div class="alerta">⚠ ${esc(a)}</div>`).join('');
+  el.innerHTML = h + `<div class="lmin">${htmlMinero(t.upm, R, eq, true)}</div>`;
+  if (pop && pop.isOpen()) pop.update();
+}
 
+const PANEL_SENT = { t: null, e: null };
+function alertasFrente(fr, st, A, corteISO) { // lo marcado frente a lo que ven las imágenes; no bloquea, avisa
+  const out = []; if (!fr || !(fr.frente || esFrente(fr))) return out;
+  const corte = new Date((corteISO || CORTE) + 'T00:00'), ok = st && !st.error && !st.fuera && !st.sinAnillo;
+  if (fr.estado === 'Inactivo') {
+    if (!fr.parado_desde) out.push('Anote desde cuándo está parado, para poder contrastarlo con las imágenes.');
+    else if (ok && st.R != null && st.alt >= 15 && mesISO(fr.parado_desde) < corte) {
+      const nuevo = A * (1 - st.Rmax);
+      if (nuevo >= Math.max(1000, 0.15 * A)) out.push(`Lo marcó parado desde ${fmesISO(fr.parado_desde)}, pero Sentinel ve al menos ${dec(nuevo / 10000, 2)} ha abiertas después de jul-2023: ¿se reactivó, lo trabajó otro o el trazo incluye otra cosa?`);
+    }
+  }
+  if (fr.estado === 'Activo' && ok && st.n >= 30) {
+    if (st.alt / st.n < 0.2) out.push(`Lo marcó activo, pero Sentinel casi no ve alteración en sep-2026 (${Math.round(st.alt / st.n * 100)} % de los píxeles): ¿está activo, ya se revegetó o es muy angosto para Sentinel?`);
+    else if (st.rev / st.n >= 0.4) out.push(`Lo marcó activo, pero Sentinel ve revegetación entre 2023 y 2026 en ${Math.round(st.rev / st.n * 100)} % del trazo: ¿sigue activo?`);
+  }
+  return out;
+}
+async function vistaSentinel(x, vertices, A) { // al guardar o editar un área: lo que ven las imágenes antes de elegir
+  const box = $(x + 'Sent'); box.style.display = ''; box.innerHTML = 'Mirando el trazo en las imágenes…';
+  let st; try { st = relativoSentinel(await cargarNDVI(), [vertices]); } catch (e) { st = { error: true }; }
+  let g21 = null; try { g21 = await verde21(vertices); } catch (e) {}
+  PANEL_SENT[x] = { st, A }; const e = evalSent(st, A);
+  box.innerHTML = '<b>Lo que ven las imágenes en este trazo</b><br>' + (e.est === 'nc' ? 'Sentinel: no concluyente (trazo pequeño o angosto, o sin bosque de referencia).'
+    : `Sentinel: cerca de ${Math.round(st.R * 100)} % ya intervenido en jul-2023 (al menos ${dec(e.A23 / 10000, 2)} ha); al menos ${dec(A * (1 - st.Rmax) / 10000, 2)} ha abiertas después.`) + '<br>' + texto21(g21);
+  alertasPanel(x);
+}
+function alertasPanel(x) {
+  const el = $(x + 'Alerta'), d = PANEL_SENT[x]; if (!el) return; if (!d) { el.innerHTML = ''; return; }
+  const fr = frLeer(x); el.innerHTML = fr.falta ? '' : alertasFrente(fr, d.st, d.A).map(a => `<div class="alerta">⚠ ${esc(a)}</div>`).join('');
+}
 async function pintarTrazos() {              // en el color del minero asignado; sin minero, líneas celestes y áreas blancas
   const ts = (await trazosTodos()).filter(pasaFiltro); capaLineas.clearLayers(); capaAreas.clearLayers();
   ts.forEach(t => {
     const vs = t.vertices.map(([a, b]) => L.latLng(a, b));
     if (t.tipo === 'area') {
-      const col = colorDe(t.upm) || '#ffffff', hu = t.que === HUELLA;   // la huella anterior al corte va punteada
+      const col = colorDe(t.upm) || '#ffffff', hu = t.que === HUELLA || (esFrente(t) && t.estado === 'Inactivo');   // frentes inactivos (y huellas viejas) punteados
       L.polygon(vs, { color: '#000', weight: 5, opacity: .35, fill: false, interactive: false }).addTo(capaAreas);
       L.polygon(vs, { color: col, weight: 3, dashArray: hu ? '10 8' : null, fillColor: col, fillOpacity: hu ? .08 : .18, interactive: false }).addTo(capaAreas);
+      if (t.veg_url) L.imageOverlay(t.veg_url, t.veg_bounds, { opacity: .7, interactive: false }).addTo(capaAreas);   // vegetación que se quitó del área
       etiqueta(centro(vs), `${rotulo(t)} · ${haTxt(t.area_m2)}`, 'grande', () => fichaTrazo(t, centro(vs))).addTo(capaAreas);
     } else {
       L.polyline(vs, { color: '#000', weight: 5, opacity: .35, interactive: false }).addTo(capaLineas);
@@ -686,10 +1042,25 @@ async function datosExport() {
   const cab = ['n', 'consecutivo', 'nombre', 'upm', 'nota', 'fecha_hora', 'latitud', 'longitud', 'precision_m', 'este_ctm12', 'norte_ctm12', 'origen', 'lecturas'];
   const filas = pts.map((p, i) => [i + 1, p.codigo || '', q(p.nombre), q(p.upm), q(p.nota), p.local, c(p.lat.toFixed(6)), c(p.lon.toFixed(6)), p.precision != null ? c(p.precision) : '', p.este, p.norte, q(p.origen), p.muestras].join(';'));
   const csv = '﻿' + cab.join(';') + '\n' + filas.join('\n') + '\n';
-  const cabT = ['n', 'consecutivo', 'nombre', 'tipo', 'que_es', 'upm', 'nota', 'fecha_hora', 'longitud_o_perimetro_m', 'area_ha', 'area_m2', 'vertices', 'tramos_m', 'vertices_ctm12_este_norte', 'como_se_midio', 'calculo_anterioridad'];
-  const filasT = ts.map((t, i) => [i + 1, t.codigo || '', q(t.nombre), t.tipo === 'area' ? 'área' : 'línea', q(t.que), q(t.upm), q(t.nota), t.local, c(t.longitud_m),
-    t.area_m2 != null ? c((t.area_m2 / 10000).toFixed(2)) : '', t.area_m2 ?? '', t.vertices.length, q(t.tramos_m.map(c).join(' | ')), q(t.ctm.map(([e, n]) => `${e} ${n}`).join(' | ')), q(t.medicion || ''), q(t.calc ? t.calc.resumen.replace(/\n/g, ' ') : '')].join(';'));
+  const AN = {};                              // análisis de cada minero con frentes, con lo guardado en el teléfono
+  for (const u of [...new Set(ts.filter(esFrente).map(t => t.upm))]) { const eq = await equiposDe(u); AN[u] = { eq, R: analizar(await frentesDe(u), eq) }; }
+  const fi = t => esFrente(t) && AN[t.upm] ? AN[t.upm].R.F.find(f => f.t.id === t.id) : null;
+  const cabT = ['n', 'consecutivo', 'nombre', 'tipo', 'que_es', 'upm', 'nota', 'fecha_hora', 'longitud_o_perimetro_m', 'area_ha', 'area_m2', 'vertices', 'tramos_m', 'vertices_ctm12_este_norte', 'como_se_midio',
+    'area_trazada_ha', 'arboles_quitados_ha', 'es_frente', 'estado_frente', 'parado_desde', 'google_2021_intervenido_pct', 'profundidad_m', 'sentinel_anterior_al_corte', 'intervenida_jul2023_al_menos_ha', 'intervenida_jul2023_pct', 'inicio_frente_a_mas_tardar', 'alertas', 'alertas_al_guardar', 'anterioridad_guardada', 'calculo_anterioridad'];
+  const G21 = {}; for (const t of ts.filter(esFrente)) { try { G21[t.id] = await verde21(t.vertices); } catch (e) {} }
+  const filasT = ts.map((t, i) => { const f = fi(t), g = G21[t.id]; return [i + 1, t.codigo || '', q(t.nombre), t.tipo === 'area' ? 'área' : 'línea', q(t.que), q(t.upm), q(t.nota), t.local, c(t.longitud_m),
+    t.area_m2 != null ? c((t.area_m2 / 10000).toFixed(2)) : '', t.area_m2 ?? '', t.vertices.length, q(t.tramos_m.map(c).join(' | ')), q(t.ctm.map(([e, n]) => `${e} ${n}`).join(' | ')), q(t.medicion || ''),
+    t.area_trazada_m2 ? c((t.area_trazada_m2 / 10000).toFixed(2)) : '', t.veg_m2 ? c((t.veg_m2 / 10000).toFixed(2)) : '',
+    t.tipo === 'area' ? (esFrente(t) ? 'sí' : 'no') : '', q(t.estado || ''), t.parado_desde || '', g && !g.sin ? Math.round(g.pct * 100) : (esFrente(t) ? 'sin imagen' : ''), f ? c(f.h) : '', f ? EST_T[f.est] : '', f ? c((f.A23 / 10000).toFixed(2)) : '', f && f.A ? Math.round(f.A23 / f.A * 100) : '',
+    f && f.ini ? isoMes(f.ini) : '', q(f ? alertasFrente(t, f.st, f.A, AN[t.upm].eq.cCorte).join(' | ') : ''), q((t.alertas_al_guardar || []).join(' | ')), t.ant ? q(t.ant.fecha) : '', q(t.calc ? t.calc.resumen.replace(/\n/g, ' ') : '')].join(';'); });
   const csvT = '﻿' + cabT.join(';') + '\n' + filasT.join('\n') + '\n';
+  const cabM = ['minero', 'frentes', 'activos', 'inactivos', 'area_frentes_ha', 'intervenida_jul2023_al_menos_ha', 'intervenida_jul2023_pct', 'frentes_con_anterioridad', 'inicio_calculado', 'inicio_manifestado',
+    'produccion_hoy_m3_ano', 'produccion_que_dice_m3_ano', 'produccion_observada_desde_corte_m3_ano', 'supera_165000', 'motobombas_promedio', 'motobombas_hoy', 'pulgadas', 'caudal_m3_h', 'agua_por_grava',
+    'horas_dia', 'dias_semana', 'semanas_paradas_clima_al_ano', 'paradas_puntuales', 'produccion_que_dice_m3_dia', 'fecha_corte', 'fecha_visita', 'equipos_anotados'];
+  const filasM = Object.entries(AN).map(([u, { eq, R }]) => [q(u), R.F.length, R.nAct, R.nIn, c((R.A / 10000).toFixed(2)), c((R.A23 / 10000).toFixed(2)), R.A ? Math.round(R.A23 / R.A * 100) : '', R.nSi,
+    R.ini ? isoMes(R.ini) : '', eq.cInicio || '', Math.round(R.prodHoy), Math.round(R.prodDice), Math.round(R.prodObs), Math.max(R.prodHoy, R.prodDice, R.prodObs) > UMBRAL ? 'sí' : 'no',
+    c(nv(eq.cBombas)), c(nv(eq.cBombasHoy)), eq.cPulg, c(nv(eq.cCaudal)), c(nv(eq.cRel)), c(nv(eq.cHoras)), c(nv(eq.cDias)), c(nv(eq.cSemClima)), q(paradasTxt(eq.paradas)), c(nv(eq.cManif)), eq.cCorte, eq.cVisita, eq.guardado ? 'sí' : 'no (valores por defecto)'].join(';'));
+  const csvM = filasM.length ? '﻿' + cabM.join(';') + '\n' + filasM.join('\n') + '\n' : '';
   const kc = vs => vs.map(([la, lo]) => `${lo},${la},0`).join(' ');
   const descT = t => `${t.que} · ${t.upm} · ${t.local} · ` + (t.tipo === 'area' ? `${haTxt(t.area_m2)} · perímetro ${t.longitud_m} m` : `${t.longitud_m} m`) + ` · tramos (m): ${t.tramos_m.join(', ')}${t.nota ? ' · ' + t.nota : ''}`;
   const kml = `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>Campo ZRP 753</name>` +
@@ -705,10 +1076,15 @@ async function datosExport() {
     ...pts.map(p => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [p.lon, p.lat] }, properties: { ...p } })),
     ...ts.map(t => ({ type: 'Feature', geometry: t.tipo === 'area' ? { type: 'Polygon', coordinates: [lonlat([...t.vertices, t.vertices[0]])] } : { type: 'LineString', coordinates: lonlat(t.vertices) },
       properties: { id: t.id, tipo: t.tipo, consecutivo: t.codigo || null, nombre: t.nombre, que_es: t.que, upm: t.upm, nota: t.nota, fecha: t.fecha, local: t.local, longitud_o_perimetro_m: t.longitud_m,
-        area_m2: t.area_m2, area_ha: t.area_m2 != null ? +(t.area_m2 / 10000).toFixed(2) : null, tramos_m: t.tramos_m, vertices_ctm12: t.ctm, como_se_midio: t.medicion || null, calculo_anterioridad: t.calc ? t.calc.resumen : null } }))] }, null, 1);
+        area_m2: t.area_m2, area_ha: t.area_m2 != null ? +(t.area_m2 / 10000).toFixed(2) : null, tramos_m: t.tramos_m, vertices_ctm12: t.ctm, como_se_midio: t.medicion || null,
+        area_trazada_m2: t.area_trazada_m2 || null, arboles_quitados_m2: t.veg_m2 || null,
+        es_frente: t.tipo === 'area' ? esFrente(t) : null, estado_frente: t.estado || null, parado_desde: t.parado_desde || null,
+        google_2021_intervenido_pct: G21[t.id] && !G21[t.id].sin ? Math.round(G21[t.id].pct * 100) : null, alertas_al_guardar: t.alertas_al_guardar || null,
+        ...(fi(t) ? { profundidad_m: fi(t).h, sentinel_anterior_al_corte: EST_T[fi(t).est], intervenida_jul2023_al_menos_ha: +(fi(t).A23 / 10000).toFixed(2), inicio_frente_a_mas_tardar: fi(t).ini ? isoMes(fi(t).ini) : null } : {}),
+        calculo_anterioridad: t.calc ? t.calc.resumen : null } }))] }, null, 1);
   const d = new Date(), z = n => String(n).padStart(2, '0');
   const base = `ZRP753_campo_${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}_${z(d.getHours())}${z(d.getMinutes())}`;
-  return { pts, ts, csv, csvT, kml, gj, base };
+  return { pts, ts, csv, csvT, csvM, kml, gj, base };
 }
 async function compartir(archivos) {
   if (navigator.canShare && navigator.canShare({ files: archivos })) {
@@ -719,7 +1095,7 @@ async function compartir(archivos) {
 }
 async function exportarZip() {
   const x = await datosExport(); if (!x.pts.length && !x.ts.length) { avisar('No hay nada para exportar'); return; }
-  const z = new JSZip(); z.file(x.base + '_puntos.csv', x.csv); if (x.ts.length) z.file(x.base + '_lineas_y_areas.csv', x.csvT);
+  const z = new JSZip(); z.file(x.base + '_puntos.csv', x.csv); if (x.ts.length) z.file(x.base + '_lineas_y_areas.csv', x.csvT); if (x.csvM) z.file(x.base + '_resumen_mineros.csv', x.csvM);
   z.file(x.base + '.kml', x.kml); z.file(x.base + '.geojson', x.gj);
   const blob = await z.generateAsync({ type: 'blob' });
   await compartir([new File([blob], x.base + '.zip', { type: 'application/zip' })]);
@@ -728,11 +1104,12 @@ async function exportarCsv() {
   const x = await datosExport(); if (!x.pts.length && !x.ts.length) { avisar('No hay nada para exportar'); return; }
   const fs = [new File([x.csv], x.base + '_puntos.csv', { type: 'text/csv' })];
   if (x.ts.length) fs.push(new File([x.csvT], x.base + '_lineas_y_areas.csv', { type: 'text/csv' }));
+  if (x.csvM) fs.push(new File([x.csvM], x.base + '_resumen_mineros.csv', { type: 'text/csv' }));
   await compartir(fs);
 }
 async function copiarTexto() {
   const x = await datosExport(); if (!x.pts.length && !x.ts.length) { avisar('No hay nada para copiar'); return; }
-  try { await navigator.clipboard.writeText((x.csv + (x.ts.length ? '\n' + x.csvT : '')).replace(/﻿/g, '')); avisar('Copiado: pégalo en WhatsApp o en un correo'); }
+  try { await navigator.clipboard.writeText((x.csv + (x.ts.length ? '\n' + x.csvT : '') + (x.csvM ? '\n' + x.csvM : '')).replace(/﻿/g, '')); avisar('Copiado: pégalo en WhatsApp o en un correo'); }
   catch (e) { avisar('No se pudo copiar; usa «Compartir solo CSV»'); }
 }
 
@@ -772,20 +1149,28 @@ map.on('move', () => { actualizarMira(); textoMed(); });
 map.on('click', e => { if (MIDIENDO) medirAgregar(e.latlng); });
 $('bMedCruz').onclick = () => medirAgregar(map.getCenter());
 $('bMedYo').onclick = () => { if (POS) medirAgregar([POS.lat, POS.lon]); else avisar('Sin GPS todavía'); };
-$('bMedDeshacer').onclick = () => { VERT.pop(); pintarMed(); };
+$('bMedDeshacer').onclick = () => { VERT.pop(); VEG = null; pintarMed(); };
 $('bMedFin').onclick = () => medirFin(true);
-$('bMedArea').onclick = () => { CERRADA = !CERRADA; marcarArea(); pintarMed(); };
+$('bMedArea').onclick = () => { CERRADA = !CERRADA; VEG = null; marcarArea(); pintarMed(); };
 $('bMedGuardar').onclick = medirGuardar;
 $('bTCancelar').onclick = () => abrir(null); $('bTGuardar').onclick = trazoConfirmar;
 $('bMedir').onclick = medirAbrir;
 $('filtros').onclick = e => { const v = e.target.dataset.v; if (v) alternarVer(v); };
 $('fMinero').onchange = async e => { FILTRO = e.target.value; await pintarMios(); await pintarTrazos(); };
-$('fUpm').onchange = e => otroMinero(e.target); $('tUpm').onchange = e => otroMinero(e.target); $('eUpm').onchange = e => otroMinero(e.target);
+$('fUpm').onchange = e => otroMinero(e.target); $('tUpm').onchange = async e => { await otroMinero(e.target); tituloT(); }; $('eUpm').onchange = e => otroMinero(e.target);
 $('bCalc').onclick = () => abrirCalc(null);
-$('pCalc').addEventListener('input', e => { if (e.target.id === 'cA1') CALC.autoA1 = false; calcular(); });
+$('pCalc').addEventListener('input', calcular);
+$('bCParada').onclick = () => { agregarParada(); };
+$('tParado').oninput = () => alertasPanel('t'); $('eParado').oninput = () => alertasPanel('e');
+$('bMedVeg').onclick = () => { if (!(CERRADA && VERT.length > 2)) return; const m = medidas(VERT, true); VEG = null; pintarMed();
+  proponerVeg(VERT.map(v => [v.lat, v.lng]), m.area, r => { VEG = r; pintarMed(); }); };
+$('bVegSi').onclick = () => { const p = VEG_PROP; $('pVeg').classList.remove('abierto'); capaVeg.clearLayers(); VEG_PROP = null; if (p) p.alAceptar(p.r); };
+$('bVegNo').onclick = () => { $('pVeg').classList.remove('abierto'); capaVeg.clearLayers(); VEG_PROP = null; };
+document.querySelectorAll('.seg.opc').forEach(g => g.addEventListener('click', e => { const v = e.target.closest('button')?.dataset.v; if (v == null) return;
+  segPoner(g.id, v); frRefrescar(g.id[0]); }));
 $('cPulg').onchange = () => { $('cCaudal').value = CAUDAL[$('cPulg').value] || ''; calcular(); };
 $('bCCopiar').onclick = calcCopiar; $('bCGuardar').onclick = calcGuardar;
-$('bCCerrar').onclick = async () => { await metaSet('calcUltimo', paramsCalc()); abrir(null); };
+$('bCCerrar').onclick = () => abrir(null);
 $('bECancelar').onclick = () => { if (EDIT && EDIT.desdeMapa) abrir(null); else abrirLista(); }; $('bEGuardar').onclick = guardarEdicion;
 $('bPunto').onclick = abrirNuevoPunto;
 $('bCancelar').onclick = () => abrir(null);
@@ -809,6 +1194,9 @@ $('bBorrarPuntos').onclick = async () => { if (!confirm('¿Borrar TODOS tus punt
   await cargarZRP(); VER = { ...VER, ...((await metaGet('ver')) || {}) };
   for (const p of await puntosTodos()) if (!p.codigo && /^P\d+$/.test(p.nombre || '')) await puntoGuardar({ ...p, codigo: p.nombre, nombre: '' });   // registros de antes: «P01» pasa a consecutivo
   for (const t of await trazosTodos()) if (!t.codigo && /^[LA]\d+$/.test(t.nombre || '')) await trazoGuardar({ ...t, codigo: t.nombre, nombre: '' });
+  for (const t of (await trazosTodos()).filter(t => esFrente(t) && !t.frente_n).sort((a, b) => a.fecha < b.fecha ? -1 : 1)) {
+    const n = await numeroLibre(t.upm, t.id); await trazoGuardar({ ...t, frente_n: n, codigo: 'F' + n, codigo_area: t.codigo });
+  }
   EXTRA = (await metaGet('personasExtra')) || [];   // más los nombres ya usados en lo tomado, por si se borró el paquete
   [...(await puntosTodos()), ...(await trazosTodos())].forEach(r => { if (r.upm && r.upm !== SIN && r.upm !== OTRO && !EXTRA.includes(r.upm)) EXTRA.push(r.upm); });
   await cargarCapas(); await pintarMios(); await pintarTrazos(); aplicarVer(); actualizarMira(); iniciarGPS();
