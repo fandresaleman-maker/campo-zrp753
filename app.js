@@ -356,10 +356,6 @@ function fichaTrazo(t, ll) {
       ...(t.tipo === 'area' && !t.veg_m2 ? [['Quitar árboles del área', () => proponerVeg(t.vertices, t.area_m2, r => aceptarVegTrazo(t, r))]] : [])]);
   if (fr) fichaAnt(t, d.querySelector('[data-ant]'), pop).catch(() => { d.querySelector('[data-ant]').textContent = 'No se pudo calcular la anterioridad.'; });
 }
-function verEnCapa(id, t) {                  // cambia el mapa a esa imagen y encuadra el trazo
-  const i = CAPAS.findIndex(c => c.id === id); if (i < 0) { avisar('Esa imagen no está cargada'); return; }
-  verCapa(i); map.fitBounds(L.latLngBounds(t.vertices), { paddingTopLeft: [20, 170], paddingBottomRight: [110, 150], maxZoom: 18 });
-}
 async function aceptarVegTrazo(t, r) {       // guarda el área sin la vegetación aceptada
   const base = (await trazoGet(t.id)) || t, A0 = base.area_trazada_m2 || base.area_m2, veg = Math.round(A0 * r.frac);
   const nuevo = { ...base, area_trazada_m2: A0, area_m2: A0 - veg, veg_m2: veg, veg_url: r.url, veg_bounds: r.bounds, veg_manchas: r.manchas, editado: fechaLocal(new Date()) };
@@ -494,7 +490,7 @@ async function trazoConfirmar() {
   let codigo = PROX_T, extra = {};
   if (fr.frente) { const n = await numeroLibre($('tUpm').value); codigo = 'F' + n; extra.frente_n = n; }
   if (tipo === 'area' && VEG) extra = { ...extra, area_trazada_m2: Math.round(m.area), veg_m2: Math.round(m.area * VEG.frac), veg_url: VEG.url, veg_bounds: VEG.bounds, veg_manchas: VEG.manchas };
-  const d = PANEL_SENT.t, al = fr.frente && d ? alertasFrente(fr, d.st, d.A) : [];
+  const d = PANEL_SENT.t, al = fr.frente && d ? alertasFrente(fr, d.st, d.A, null, d.g21).map(avisoTxt) : [];
   const reg = { id: ahora.getTime().toString(36) + Math.random().toString(36).slice(2, 6), tipo, codigo, nombre: $('tCorto').value.trim(),
     ...fr, medicion: $('tMed').value,
     upm: $('tUpm').value, nota: $('tNota').value.trim(), fecha: ahora.toISOString(), local: fechaLocal(ahora),
@@ -535,7 +531,7 @@ async function guardarEdicion() {
       const f = frLeer('e'); if (f.falta) { avisar(f.falta); return; } Object.assign(nuevo, f);
       if (f.frente && (!esFrente(r) || r.upm !== nuevo.upm || !r.frente_n)) { const n = await numeroLibre(nuevo.upm, r.id); nuevo.frente_n = n; nuevo.codigo = 'F' + n; }   // pasa a frente o cambia de minero
       if (!f.frente && esFrente(r)) { const c = await siguiente('A'); nuevo.codigo = c; nuevo.frente_n = null; await gastar(c); }       // deja de ser frente: vuelve a la serie A
-      const d = PANEL_SENT.e, al = f.frente && d ? alertasFrente(f, d.st, d.A) : [];
+      const d = PANEL_SENT.e, al = f.frente && d ? alertasFrente(f, d.st, d.A, null, d.g21).map(avisoTxt) : [];
       if (al.length) nuevo.alertas_al_guardar = al; else delete nuevo.alertas_al_guardar;
     }
     else nuevo.que = $('eQue').value;
@@ -586,7 +582,8 @@ async function cargarNDVI() {                // rojo = NDVI 2023, verde = NDVI 2
   const g = cv.getContext('2d', { willReadFrequently: true }); g.drawImage(img, 0, 0);
   const px = g.getImageData(0, 0, meta.w, meta.h).data, n = meta.w * meta.h, a = new Float32Array(n), b = new Float32Array(n);
   for (let i = 0; i < n; i++) { const r = px[i * 4], v = px[i * 4 + 1]; a[i] = r ? (r - 1) / 254 * 1.2 - 0.2 : NaN; b[i] = v ? (v - 1) / 254 * 1.2 - 0.2 : NaN; }
-  NDVI = { meta, n23: a, n26: b }; return NDVI;
+  const p80z = arr => { const v = []; for (let i = 0; i < n; i += 7) if (!isNaN(arr[i])) v.push(arr[i]); v.sort((x, y) => x - y); return v[Math.floor(0.8 * (v.length - 1))]; };
+  NDVI = { meta, n23: a, n26: b, z23: p80z(a), z26: p80z(b) }; return NDVI;   // z: bosque típico de la ZRP en cada fecha (≈0,90)
 }
 function relativoSentinel(S, polys) {
   const { lon0, lat1, d, w, h } = S.meta, AN = 8;             // anillo de bosque de referencia: 8 píxeles (≈80 m) alrededor
@@ -602,9 +599,10 @@ function relativoSentinel(S, polys) {
   for (let k = 0; k < AN; k++) { const N = Dl.slice(); for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const i = y * W + x; if (!Dl[i] && ((x > 0 && Dl[i - 1]) || (x < W - 1 && Dl[i + 1]) || (y > 0 && Dl[i - W]) || (y < H - 1 && Dl[i + W]))) N[i] = 1; } Dl = N; }
   const gi = (x, y) => (y0 + y) * w + (x0 + x), r23 = [], r26 = [];
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const i = y * W + x; if (Dl[i] && !M[i]) { const a = S.n23[gi(x, y)], b = S.n26[gi(x, y)]; if (!isNaN(a) && !isNaN(b)) { r23.push(a); r26.push(b); } } }
-  if (r23.length < 20) return { sinAnillo: true };
   const p80 = arr => { const t = arr.slice().sort((p, q) => p - q), k = 0.8 * (t.length - 1), i = Math.floor(k); return t[i] + (t[Math.min(i + 1, t.length - 1)] - t[i]) * (k - i); };
-  const f23 = p80(r23), f26 = p80(r26);
+  let f23 = r23.length >= 20 ? p80(r23) : NaN, f26 = r26.length >= 20 ? p80(r26) : NaN, refZona = false;
+  if (!(f23 >= 0.75)) { f23 = S.z23; refZona = true; }   // si alrededor no hay bosque (todo intervenido o sin datos), se compara con el bosque típico de la ZRP
+  if (!(f26 >= 0.75)) { f26 = S.z26; refZona = true; }
   const calc = (dx, dy, interior) => {         // la máscara corrida dx, dy píxeles simula un desfase entre Google y Sentinel
     let num = 0, den = 0, n = 0, alt = 0, rev = 0;
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
@@ -621,7 +619,7 @@ function relativoSentinel(S, polys) {
   [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, 1], [-1, 1], [1, -1]].forEach(([dx, dy]) => vals.push(calc(dx, dy, false).R));
   vals.push(calc(0, 0, true).R);
   const ok = vals.filter(v => v != null);
-  return { R: base.R, Rmin: ok.length ? Math.min(...ok) : null, Rmax: ok.length ? Math.max(...ok) : null, n: base.n, alt: base.alt, rev: base.rev, f23, f26, fecha23: S.meta.fecha2023, fecha26: S.meta.fecha2026 };
+  return { R: base.R, Rmin: ok.length ? Math.min(...ok) : null, Rmax: ok.length ? Math.max(...ok) : null, n: base.n, alt: base.alt, rev: base.rev, f23, f26, refZona, fecha23: S.meta.fecha2023, fecha26: S.meta.fecha2026 };
 }
 
 /* ---------------- imágenes de Google en el teléfono: verdor de 2021 y árboles dentro de un trazo ---------------- */
@@ -697,10 +695,9 @@ async function verde21(vertices) {           // Google ene-2021: parte del trazo
   CACHE_21.set(k, res); return res;
 }
 function texto21(g) {
-  if (!g || g.sin) return 'Google ene-2021: sin imagen en este sitio.';
+  if (!g || g.sin) return 'Imagen de enero de 2021: no cubre este sitio.';
   const p = Math.round(g.pct * 100);
-  return 'Google ene-2021 (orientativo): ' + (p >= 30 ? `ya se veía intervenido cerca de ${p} % del trazo` : p >= 10 ? `se veía intervenido cerca de ${p} %, dudoso` : `casi no se veía intervenido (${p} %)`) +
-    (g.cob < 0.95 ? `; hay imagen en ${Math.round(g.cob * 100)} % del trazo` : '') + '.';
+  return 'Imagen de enero de 2021: ' + (p >= 30 ? `ya se veía intervenido (cerca del ${p} %).` : p >= 10 ? `se veía algo intervenido (cerca del ${p} %), no es claro.` : 'todavía era bosque.');
 }
 async function vegetacion(vertices, modo) {  // modo 'todo': deja solo arena, agua y suelo; 'arboles': quita solo copas
   let M = await mosaicoGoogle('g26', 18, vertices, 2); if (!M) M = await mosaicoGoogle('g26', 17, vertices, 2); if (!M) return null;
@@ -847,12 +844,41 @@ function evalSent(st, A) {                   // ✓ ✗ ? y área ya intervenida
 }
 const SIMB = { si: '<b class="si">✓</b>', no: '<b class="no">✗</b>', duda: '<b>?</b>', nc: '<b>?</b>' };
 const EST_T = { si: 'sí', no: 'no', duda: 'dudoso', nc: 'no concluyente' };
-function textoEst(f) {
+function textoEst(f) {                      // lo que dice el satélite de julio de 2023, en una frase
   const p = f.A > 0 ? Math.round(f.A23 / f.A * 100) : 0;
-  if (f.est === 'si') return `${SIMB.si} Ya estaba intervenido en jul-2023: al menos ${dec(f.A23 / 10000, 2)} ha (${p} %)`;
-  if (f.est === 'no') return `${SIMB.no} Se abrió después de jul-2023: Sentinel ve solo ${Math.round(f.st.R * 100)} % ya alterado`;
-  if (f.est === 'duda') return `${SIMB.duda} Dudoso: Sentinel ve entre ${Math.round(f.st.Rmin * 100)} y ${Math.round(f.st.Rmax * 100)} % ya alterado en jul-2023`;
-  return `${SIMB.nc} Sentinel no es concluyente (frente pequeño o angosto, o sin bosque de referencia): use la imagen de alta resolución y lo visto en campo`;
+  if (f.est === 'si') return `${SIMB.si} En julio de 2023 ya estaba intervenido: al menos ${dec(f.A23 / 10000, 2)} ha (${p} %).`;
+  if (f.est === 'no') return `${SIMB.no} En julio de 2023 este sitio todavía era bosque: el frente se abrió después.`;
+  if (f.est === 'duda') return `${SIMB.duda} Las imágenes de satélite no permiten decir si ya estaba en julio de 2023.`;
+  return `${SIMB.nc} El frente es muy pequeño o angosto para las imágenes de satélite.`;
+}
+function cautelas(st) {                      // solo para la calculadora: por qué el cálculo con Sentinel es menos preciso
+  const out = []; if (!st || st.error || st.fuera || st.sinAnillo || st.R == null || st.alt < 15) return out;
+  if (st.Rmax - st.Rmin > 0.2) out.push(`Menos preciso: el trazo es pequeño o angosto y el porcentaje cambia entre ${Math.round(st.Rmin * 100)} y ${Math.round(st.Rmax * 100)} % si se corre 10 m.`);
+  if (st.refZona) out.push('Menos preciso: alrededor del trazo no hay bosque (todo está intervenido), así que se comparó con el bosque típico de la ZRP.');
+  else if (Math.abs(st.f23 - st.f26) > 0.05) out.push(`Menos preciso: el bosque de alrededor no se ve igual en las dos fechas (NDVI ${dec(st.f23, 2)} en 2023 y ${dec(st.f26, 2)} en 2026), por nubes, bruma o tala.`);
+  return out;
+}
+const AV = (tipo, titulo, que, pregunta, hacer) => ({ tipo, titulo, que, pregunta, hacer });   // tipo: no, falta, duda, ok
+function avisoHtml(a) {                      // ✗ rojo, ? y faltantes en ámbar, ✓ verde; siempre: qué pasa, qué preguntarle, qué hacer
+  if (typeof a === 'string') return `<div class="cautela">${esc(a)}</div>`;
+  const cls = { no: 'alerta', ok: 'okv', duda: 'cautela', falta: 'cautela' }[a.tipo];
+  return `<div class="${cls}"><b>${esc(a.titulo)}</b><br>${esc(a.que)}` + (a.pregunta ? `<br><b>Pregúntele:</b> «${esc(a.pregunta)}»` : '') + (a.hacer ? `<br><b>Qué hacer:</b> ${esc(a.hacer)}` : '') + '</div>';
+}
+const avisoTxt = a => typeof a === 'string' ? a : `${a.titulo}: ${a.que}` + (a.pregunta ? ` Pregúntele: «${a.pregunta}»` : '') + (a.hacer ? ` Qué hacer: ${a.hacer}` : '');
+function contraste(fr, st, A, corteISO, g21) { // lo marcado frente a lo que ven las imágenes: avisos y un veredicto
+  const out = alertasFrente(fr, st, A, corteISO, g21), e = evalSent(st, A);
+  if (!(fr && (fr.frente || esFrente(fr))) || !fr.estado) return out;
+  const p21 = g21 && !g21.sin ? Math.round(g21.pct * 100) : null, viejo21 = p21 != null && p21 >= 30;
+  if (e.est === 'no' && viejo21) out.push(AV('duda', '? Las imágenes no coinciden entre sí', 'En enero de 2021 este sitio ya estaba intervenido, en julio de 2023 se veía cubierto de monte y después se volvió a abrir.',
+    '¿Trabajó este sitio antes de 2021?', 'Si dice que sí, anótelo en la nota del frente: la imagen de 2021 lo respalda y es anterior al corte.'));
+  if (out.some(a => a.tipo === 'no')) return out;
+  if (e.est === 'si') out.push(AV('ok', '✓ Cuadra', 'Lo que usted marcó coincide con las imágenes' + (viejo21 ? ': el frente ya existía en 2021 y en 2023.' : ': el frente ya existía en julio de 2023.')));
+  else if (e.est === 'no' && !viejo21) out.push(AV('ok', '✓ Cuadra, pero no sirve para anterioridad', 'Las imágenes muestran que este frente se abrió después de julio de 2023.',
+    '¿Dónde trabajaba antes de 2023?', 'Si tiene frentes más viejos, trácelos: son los que pueden probar la anterioridad.'));
+  else if (e.est !== 'no') out.push(AV('duda', '? No se puede saber con el satélite', (e.est === 'nc' ? 'El frente es muy pequeño o angosto para las imágenes de satélite.' : 'Las imágenes de satélite no permiten decir si ya estaba en julio de 2023.') +
+    (viejo21 ? ' La imagen de enero de 2021 sí lo muestra intervenido, lo que indica que es anterior al corte.' : p21 != null ? ' En la imagen de enero de 2021 todavía era bosque.' : ''),
+    '¿Desde cuándo trabaja este frente?', 'Anote lo que diga y tome fotos con Timestamp: aquí la prueba es lo que se vea en campo.'));
+  return out;
 }
 async function frentesDe(upm, incluir) {     // frentes del minero (activos e inactivos) con su resultado de Sentinel
   const ts = (await trazosTodos()).filter(t => esFrente(t) && t.upm === upm);
@@ -887,8 +913,8 @@ function analizar(frs, eq, profDe = profGuardada) {
     diasTrab = Math.max(1, cal - paradoDias(P, iniM, fin) - sinFecha(P)) * fac; if (qd > 0) hNec = V / qd;
   }
   const avisosHist = [];
-  histDe(eq).slice(1).forEach(r => { if (!r.desde) avisosHist.push('Un cambio de equipos no tiene fecha y no se tuvo en cuenta.');
-    else if (iniM && mesISO(r.desde) <= iniM) avisosHist.push(`El cambio de equipos de ${fmesISO(r.desde)} queda antes del inicio que dice (${fmes(iniM)}): aclárelo con él.`); });
+  histDe(eq).slice(1).forEach(r => { if (!r.desde) avisosHist.push(AV('falta', 'Falta un dato', 'Un cambio de equipos no tiene fecha, así que no se tuvo en cuenta.', '¿Desde cuándo tiene esas motobombas?', 'Anote el mes y el año en esa fila.'));
+    else if (iniM && mesISO(r.desde) <= iniM) avisosHist.push(AV('no', '✗ Las fechas no cuadran', `Anotó un cambio de equipos en ${fmesISO(r.desde)}, antes del inicio que él dice (${fmes(iniM)}).`, '¿Cuándo empezó a trabajar y cuándo cambió de motobombas?', 'Corrija la fecha que esté mal.')); });
   return { F, A, A23, V, Vn, T, fac, sem, hoy, capHoy, corte, visita, fin, ini, iniM, hMed, capPost, AmaxPost, AeqPre: A - AmaxPost, hNec, diasTrab, avisosHist,
     nAct, nIn: F.length - nAct, nSi: F.filter(f => f.est === 'si').length,
     prodHoy: nAct || !F.length ? capHoy : 0, prodDice: nv(eq.cManif) * 365.25 * fac, prodObs: Vn / T };
@@ -903,7 +929,7 @@ function htmlMinero(upm, R, eq, corto) {     // resumen del minero: una línea (
   const dice = R.iniM ? ` · dice ${fmes(R.iniM)}` + (R.ini ? ` (${difTxt(R.iniM, R.ini)})` : '') : ' · inicio manifestado sin dato';
   const sinEq = eq.guardado ? '' : ' <i>Equipos sin anotar: valores por defecto.</i>';
   const alerta = R.iniM && R.iniM < R.corte && !R.F.some(f => f.est === 'si') && R.F.some(f => f.est === 'no')
-    ? `<div class="alerta">⚠ Dice que empezó en ${fmes(R.iniM)}, pero sus frentes dibujados se abrieron después de jul-2023: la anterioridad tendría que salir de otros frentes o de otra prueba.</div>` : '';
+    ? avisoHtml(AV('no', '✗ No cuadra con lo que él dice', `Dice que empezó en ${fmes(R.iniM)}, pero todos los frentes que usted trazó se abrieron después de julio de 2023.`, '¿Dónde trabajaba antes de 2023? ¿Me muestra esos frentes?', 'Trace esos frentes viejos: sin ellos no hay prueba de anterioridad.')) : '';
   if (corto) return `<b>Total de ${esc(upm)}</b> · ${fr} · ${ant} · ${ini}${dice}.${sinEq}${alerta}`;
   const top = Math.max(R.prodHoy, R.prodDice, R.prodObs);
   const escala = `<b>Escala:</b> hoy ${miles(R.prodHoy)} m³/año con ${dec(R.hoy.n, 1).replace(',0', '')} motobomba(s) de ${R.hoy.pulg}"` + (R.nAct ? '' : ' (no tiene frentes activos dibujados)') +
@@ -968,12 +994,11 @@ function cajaSentinel(st, A) {               // detalle del método relativo par
   if (st.R == null || st.alt < 15) return t + `Dentro del área, Sentinel ve alterados en 2026 solo ${st.alt} de ${st.n} píxeles de 10 m: frente muy angosto o pequeño para Sentinel. No es concluyente; use la alta resolución y lo visto en campo.`;
   return t + `<table class="tsent"><tr><td>Área en Google 2026 (lo trazado)</td><td><b>${ha(A)} ha</b></td></tr>` +
     `<tr><td>Píxeles de 10 m dentro · alterados en 2026</td><td>${st.n} · ${st.alt} (${Math.round(st.alt / st.n * 100)} %)</td></tr>` +
-    `<tr><td>Bosque de referencia (NDVI) 2023 · 2026</td><td>${dec(st.f23, 2)} · ${dec(st.f26, 2)}</td></tr>` +
+    `<tr><td>Bosque de referencia (NDVI) 2023 · 2026${st.refZona ? ' (el típico de la ZRP)' : ''}</td><td>${dec(st.f23, 2)} · ${dec(st.f26, 2)}</td></tr>` +
     `<tr><td>Ya alterado en jul-2023 (valor central)</td><td>${Math.round(st.R * 100)} % → ${ha(A * st.R)} ha</td></tr>` +
     `<tr><td>Margen (desfase de 10 m y bordes)</td><td>${Math.round(st.Rmin * 100)}–${Math.round(st.Rmax * 100)} %</td></tr>` +
     `<tr><td>Se toma el límite bajo: al menos</td><td><b class="si">${ha(A * Math.max(0, st.Rmin))} ha</b></td></tr></table>` +
-    (st.Rmax - st.Rmin > 0.2 ? '<b class="no">Margen amplio:</b> área pequeña o angosta para Sentinel; tómelo con cautela.<br>' : '') +
-    (Math.abs(st.f23 - st.f26) > 0.05 ? '<b class="no">El bosque de referencia cambió entre fechas:</b> tómelo con cautela.' : '');
+    cautelas(st).map(c => `<div class="cautela">${esc(c)}</div>`).join('');
 }
 function calcular() {
   if (!CALC || !CALC.frs) return;
@@ -987,32 +1012,33 @@ function calcular() {
     const f = R.F.find(x => x.t.id === tr.id);
     $('cA1').value = f.est === 'nc' ? 'no concluyente' : ha(f.A23); $('cNueva').value = ha(f.A - f.A23);
     $('cSent').innerHTML = cajaSentinel(f.st, f.A); $('cSent').style.display = '';
-    let h = `<div class="caja calc">${textoEst(f)}.<br>Volumen del frente: ${miles(f.V)} m³ (${ha(f.A)} ha × ${dec(f.h, 1)} m).<br>`;
+    let h = `<div class="caja calc">${textoEst(f)}<br>Volumen del frente: ${miles(f.V)} m³ (${ha(f.A)} ha × ${dec(f.h, 1)} m).<br>`;
     h += f.ini ? `Inicio de este frente: <b>a más tardar ${fmes(f.ini)}</b> ${f.ini < R.corte ? '<b class="si">antes del corte</b>' : '<b class="no">después del corte</b>'}, si todos sus equipos hubieran trabajado solo aquí${f.inactivo && f.t.parado_desde ? ' hasta ' + fmesISO(f.t.parado_desde) : ''}.` : 'Inicio de este frente: faltan los equipos.';
-    if (f.est === 'no' && f.ini && f.ini < R.corte) h += '<br><b class="no">No cuadra:</b> Sentinel lo ve abierto después de jul-2023, pero con los equipos anotados no alcanzaba a abrirlo en ese tiempo. Pregunte si tuvo más equipos o si el corte es menos hondo.';
+    const noEq = f.est === 'no' && f.ini && f.ini < R.corte ? [AV('no', '✗ No cuadra con los equipos', 'Las imágenes muestran que este frente se abrió después de 2023, pero con las motobombas que dice no le alcanzaba el tiempo para abrirlo.', '¿Cuántas motobombas trabajaron este frente? ¿Qué tan hondo es el corte?', 'Corrija la historia de equipos o la profundidad con lo que diga.')] : [];
     if (f.est === 'si' && f.ini && f.ini >= R.corte) h += '<br>El cálculo con equipos solo da una fecha límite; la imagen de jul-2023 es evidencia directa y es la que vale.';
     if (CALC.g21) h += '<br>' + texto21(CALC.g21);
-    const al = alertasFrente(tr, f.st, f.A, eq.cCorte);
-    $('cResFrente').innerHTML = h + '</div>' + al.map(a => `<div class="alerta">⚠ ${esc(a)}</div>`).join('');
-    lineas.push(`Frente ${tr.codigo || ''} (${queTxt(tr).toLowerCase()}): ${ha(f.A)} ha trazadas. ` + sinHtml(textoEst(f)) +
-      (f.st && f.st.R != null && f.est !== 'nc' ? ` (Sentinel ${f.st.fecha23} frente a ${f.st.fecha26}, método relativo al bosque de alrededor; valor central ${Math.round(f.st.R * 100)} %, margen ${Math.round(f.st.Rmin * 100)}–${Math.round(f.st.Rmax * 100)} %).` : '.') +
+    $('cResFrente').innerHTML = h + '</div>' + [...noEq, ...contraste(tr, f.st, f.A, eq.cCorte, CALC.g21)].map(avisoHtml).join('');
+    lineas.push(`Frente ${tr.codigo || ''} (${queTxt(tr).toLowerCase()}): ${ha(f.A)} ha trazadas. ` +
+      (f.st && f.st.R != null && f.est !== 'nc' ? `Sentinel ${f.st.fecha23} frente a ${f.st.fecha26}, método relativo al bosque de alrededor (valor central ${Math.round(f.st.R * 100)} %, margen ${Math.round(f.st.Rmin * 100)}–${Math.round(f.st.Rmax * 100)} %): ` : '') + sinHtml(textoEst(f)) +
       ` Profundidad ${dec(f.h, 1)} m, volumen ${miles(f.V)} m³.` + (f.ini ? ` Inicio de este frente a más tardar ${fmes(f.ini)}.` : '') + (CALC.g21 ? ' ' + texto21(CALC.g21) : '') +
       (tr.veg_m2 ? ` Área trazada ${ha(tr.area_trazada_m2)} ha, sin ${ha(tr.veg_m2)} ha de vegetación detectada en Google.` : ''));
   }
   let h = `<div class="caja calc">${htmlMinero(upm, R, eq, false)}</div>`;
-  h += R.avisosHist.map(a => `<div class="alerta">⚠ ${esc(a)}</div>`).join('');
+  h += R.avisosHist.map(avisoHtml).join('');
   if (R.F.length && R.capHoy > 0) {
     h += `<div class="caja calc"><b>Lo abierto después del corte frente a sus equipos:</b><br>Con los equipos que dice para cada época (${esc(histTxt(eq))}) y ${dec(R.fac * 7, 1)} días efectivos por semana; hoy mueve unos ${miles(R.capHoy)} m³/año.<br>` +
       `Área nueva desde jul-2023 en todos sus frentes, activos e inactivos: ${ha(R.A - R.A23)} ha → ${miles(R.Vn)} m³. Sus equipos alcanzaban unos ${miles(R.capPost)} m³ desde el corte.<br>` +
-      (R.Vn > R.capPost * 1.2 ? '<b class="no">Abrió más de lo que sus equipos explican:</b> pregunte por otros equipos, otros frentes o terceros.' : '<b class="si">Coherente con sus equipos.</b>') +
+      (R.fin <= R.corte ? '' : R.Vn > R.capPost * 1.2 ? avisoHtml(AV('no', '✗ No cuadra con los equipos', 'Desde 2023 abrió más de lo que pueden mover las motobombas que dice tener.', '¿Cuántas motobombas tuvo trabajando desde 2023? ¿Alguien más trabaja estos frentes?', 'Corrija la historia de equipos con lo que diga; si hay otro minero, saque sus frentes.')) : '<b class="si">✓ Cuadra con sus equipos.</b>') +
       (R.AeqPre > 500 && R.Vn <= R.capPost * 1.2 ? `<br>Por equipos, después del corte pudo abrir como máximo ${ha(R.AmaxPost)} ha: al menos ${ha(R.AeqPre)} ha tendrían que ser anteriores. Sirve sobre todo donde Sentinel no es concluyente.` : '') + '</div>';
   }
   if (R.hNec != null) {
-    let juicio = R.hNec <= 10 ? '<b class="si">cuadra con lo que dice</b>' : R.hNec <= 16 ? '<b>exigente: confirme turnos y equipos</b>'
-      : '<b class="no">no alcanza: pregunte por equipos anteriores, otros frentes, un inicio más antiguo o área de terceros</b>';
-    if (R.iniM >= R.corte) juicio = '<b class="no">el inicio que dice es posterior al corte</b>; ' + juicio;
-    h += `<div class="caja calc"><b>Con el inicio que dice (${fmes(R.iniM)}):</b> habría tenido que bombear <b>${dec(R.hNec, 1)} h al día</b> en ${miles(R.diasTrab)} días de trabajo; ${juicio}.</div>`;
+    const hh = dec(R.hNec, 1), ini = fmes(R.iniM);
+    h += R.hNec <= 10 ? avisoHtml(AV('ok', '✓ Cuadra con el inicio que dice', `Desde ${ini}, con sus equipos, le bastaba bombear unas ${hh} horas al día para abrir todo esto.`))
+      : R.hNec <= 16 ? avisoHtml(AV('duda', '? Es exigente', `Desde ${ini} habría tenido que bombear ${hh} horas al día para abrir todo esto.`, '¿Cuántas horas al día bombea? ¿Trabaja por turnos o de noche?', 'Corrija las horas o los equipos con lo que diga.'))
+      : avisoHtml(AV('no', '✗ No cuadra con el inicio que dice', `Para abrir todo esto desde ${ini} habría tenido que bombear ${hh} horas al día, más de lo posible.`, '¿Empezó antes? ¿Tuvo más motobombas en algún momento?', 'Corrija el inicio o la historia de equipos con lo que diga. Si parte del área es de otro, sáquela.'));
   }
+  if (R.iniM && R.iniM >= R.corte) h += avisoHtml(AV('no', '✗ Su propio inicio es después del corte', `Él mismo dice que empezó en ${fmes(R.iniM)}, después de agosto de 2023.`, '¿Trabajó en esta zona antes de agosto de 2023, aunque fuera en otro frente?', 'Si dice que no, anótelo así: su declaración no respalda la anterioridad.'));
+  if (R.iniM && R.F.length && R.iniM >= R.fin) h += avisoHtml(AV('no', '✗ Las fechas no cuadran', `Dice que empezó en ${fmes(R.iniM)}, pero según lo que usted marcó sus frentes ya estaban parados desde ${fmes(R.fin)}.`, '¿Cuándo empezó a trabajar aquí y cuándo dejó cada frente?', 'Corrija el inicio o las fechas de «Parado desde».'));
   $('cRes').innerHTML = h;
   lineas.push(sinHtml(htmlMinero(upm, R, eq, false)).replace(/ · Frentes:/, '. Frentes:'));
   lineas.push(`Equipos (manifestados): motobombas a la vez ${histTxt(eq)} (${dec(nv(eq.cRel) || 15, 0)} m³ de agua por m³ de grava), ${dec(nv(eq.cHoras), 1)} h/día, ${dec(nv(eq.cDias), 1)} días/semana; paradas: ${dec(nv(eq.cSemClima), 1)} semanas cada año por clima` + (paradasTxt(eq.paradas) ? `; puntuales: ${paradasTxt(eq.paradas)}.` : '.') +
@@ -1048,29 +1074,35 @@ async function fichaAnt(t, el, pop) {        // en la ficha del frente: su anter
       (!f.ini ? '' : f.est === 'si' && f.ini >= R.corte ? `Inicio calculado con equipos: a más tardar ${fmes(f.ini)}. <span class="nota">Es solo un límite: la imagen de jul-2023 ya lo muestra intervenido, y eso es lo que vale.</span><br>`
         : `Inicio calculado: a más tardar <b>${fmes(f.ini)}</b>, ${f.ini < R.corte ? '<b class="si">antes de ago-2023</b>' : '<b class="no">después de ago-2023</b>'}<br>`) +
       (R.iniM ? `Inicio manifestado: <b>${fmes(R.iniM)}</b>${f.ini ? ' (' + difTxt(R.iniM, f.ini) + ')' : ''}` : 'Inicio manifestado: sin dato');
-  } else h = `<b>Anterioridad del frente sin guardar.</b> ${textoEst(f)}<br><span class="nota">Toque «Calcular anterioridad», revise la profundidad y los equipos, y guarde.</span>`;
+  } else h = `<b>Anterioridad del frente</b> <span class="nota">(sin guardar)</span><br>${textoEst(f)}`;
   let g21 = null; try { g21 = await verde21(t.vertices); } catch (e) {}
-  h += '<br>' + texto21(g21) + (g21 && !g21.sin ? ' <button class="enlace" data-ver21>Ver imagen</button>' : '') +   // cambia el mapa a la imagen de 2021 sobre el frente
-    alertasFrente(t, f.st, f.A, eq.cCorte).map(a => `<div class="alerta">⚠ ${esc(a)}</div>`).join('');
+  h += '<br>' + texto21(g21) + contraste(t, f.st, f.A, eq.cCorte, g21).map(avisoHtml).join('');
   el.innerHTML = h + `<div class="lmin">${htmlMinero(t.upm, R, eq, true)}</div>`;
-  const v21 = el.querySelector('[data-ver21]'); if (v21) v21.onclick = () => { map.closePopup(); verEnCapa('ge21', t); };
   if (pop && pop.isOpen()) pop.update();
 }
 
 const PANEL_SENT = { t: null, e: null };
-function alertasFrente(fr, st, A, corteISO) { // lo marcado frente a lo que ven las imágenes; no bloquea, avisa
+function alertasFrente(fr, st, A, corteISO, g21) { // lo marcado que contradice las imágenes; no bloquea, guía
   const out = []; if (!fr || !(fr.frente || esFrente(fr))) return out;
   const corte = new Date((corteISO || CORTE) + 'T00:00'), ok = st && !st.error && !st.fuera && !st.sinAnillo;
+  const p21 = g21 && !g21.sin ? Math.round(g21.pct * 100) : null;
   if (fr.estado === 'Inactivo') {
-    if (!fr.parado_desde) out.push('Anote desde cuándo está parado, para poder contrastarlo con las imágenes.');
-    else if (ok && st.R != null && st.alt >= 15 && mesISO(fr.parado_desde) < corte) {
-      const nuevo = A * (1 - st.Rmax);
-      if (nuevo >= Math.max(1000, 0.15 * A)) out.push(`Lo marcó parado desde ${fmesISO(fr.parado_desde)}, pero Sentinel ve al menos ${dec(nuevo / 10000, 2)} ha abiertas después de jul-2023: ¿se reactivó, lo trabajó otro o el trazo incluye otra cosa?`);
+    if (!fr.parado_desde) out.push(AV('falta', 'Falta un dato', 'No anotó desde cuándo está parado este frente, y sin eso no se puede comparar con las imágenes.', '¿Desde cuándo no trabaja este frente?', 'Anótelo en «Parado desde» con «Editar frente».'));
+    else {
+      if (ok && st.R != null && st.alt >= 15 && mesISO(fr.parado_desde) < corte) {
+        const nuevo = A * (1 - st.Rmax);
+        if (nuevo >= Math.max(1000, 0.15 * A)) out.push(AV('no', '✗ No cuadra', `Usted lo marcó parado desde ${fmesISO(fr.parado_desde)}, pero las imágenes muestran que después de 2023 se abrieron unas ${dec(nuevo / 10000, 2)} ha más.`,
+          '¿Este frente se volvió a trabajar después de 2023? ¿Quién lo trabajó?', 'Si él lo reactivó, márquelo activo. Si lo trabajó otro, saque esa parte del trazo.'));
+      }
+      if (p21 != null && p21 < 10 && mesISO(fr.parado_desde) < new Date('2021-01-20T00:00')) out.push(AV('no', '✗ No cuadra', `Usted lo marcó parado desde ${fmesISO(fr.parado_desde)}, pero en enero de 2021 ese sitio todavía era bosque.`,
+        '¿Cuándo dejó de trabajar este frente?', 'Corrija la fecha de «Parado desde» con lo que él diga.'));
     }
   }
   if (fr.estado === 'Activo' && ok && st.n >= 30) {
-    if (st.alt / st.n < 0.2) out.push(`Lo marcó activo, pero Sentinel casi no ve alteración en sep-2026 (${Math.round(st.alt / st.n * 100)} % de los píxeles): ¿está activo, ya se revegetó o es muy angosto para Sentinel?`);
-    else if (st.rev / st.n >= 0.4) out.push(`Lo marcó activo, pero Sentinel ve revegetación entre 2023 y 2026 en ${Math.round(st.rev / st.n * 100)} % del trazo: ¿sigue activo?`);
+    if (st.alt / st.n < 0.2) out.push(AV('no', '✗ No cuadra', 'Usted lo marcó activo, pero en las imágenes de 2026 no se ve tierra removida en este sitio.',
+      '¿Cuándo trabajó aquí por última vez?', 'Si no se trabaja hace meses, márquelo inactivo con esa fecha. Solo un frente de menos de 20 m de ancho se le escapa al satélite.'));
+    else if (st.rev / st.n >= 0.4) out.push(AV('no', '✗ No cuadra', 'Usted lo marcó activo, pero las imágenes muestran que entre 2023 y 2026 este sitio se fue llenando de monte.',
+      '¿Sigue trabajando aquí? ¿Desde cuándo está quieto?', 'Si está quieto, márquelo inactivo con esa fecha.'));
   }
   return out;
 }
@@ -1078,14 +1110,15 @@ async function vistaSentinel(x, vertices, A) { // al guardar o editar un área: 
   const box = $(x + 'Sent'); box.style.display = ''; box.innerHTML = 'Mirando el trazo en las imágenes…';
   let st; try { st = relativoSentinel(await cargarNDVI(), [vertices]); } catch (e) { st = { error: true }; }
   let g21 = null; try { g21 = await verde21(vertices); } catch (e) {}
-  PANEL_SENT[x] = { st, A }; const e = evalSent(st, A);
-  box.innerHTML = '<b>Lo que ven las imágenes en este trazo</b><br>' + (e.est === 'nc' ? 'Sentinel: no concluyente (trazo pequeño o angosto, o sin bosque de referencia).'
-    : `Sentinel: cerca de ${Math.round(st.R * 100)} % ya intervenido en jul-2023 (al menos ${dec(e.A23 / 10000, 2)} ha); al menos ${dec(A * (1 - st.Rmax) / 10000, 2)} ha abiertas después.`) + '<br>' + texto21(g21);
+  PANEL_SENT[x] = { st, A, g21 }; const e = evalSent(st, A);
+  const nuevo = e.est === 'nc' ? 0 : A * (1 - st.Rmax);
+  box.innerHTML = '<b>Lo que ven las imágenes en este trazo</b><br>' + (e.est === 'nc' ? 'Satélite: el trazo es muy pequeño o angosto para verlo.'
+    : `Satélite: en julio de 2023 ya estaba intervenido cerca del ${Math.round(st.R * 100)} %` + (nuevo >= 500 ? `; después se abrieron unas ${dec(nuevo / 10000, 2)} ha más.` : '; después casi no creció.')) + '<br>' + texto21(g21);
   alertasPanel(x);
 }
 function alertasPanel(x) {
   const el = $(x + 'Alerta'), d = PANEL_SENT[x]; if (!el) return; if (!d) { el.innerHTML = ''; return; }
-  const fr = frLeer(x); el.innerHTML = fr.falta ? '' : alertasFrente(fr, d.st, d.A).map(a => `<div class="alerta">⚠ ${esc(a)}</div>`).join('');
+  const fr = frLeer(x); el.innerHTML = fr.falta || !fr.frente ? '' : contraste(fr, d.st, d.A, null, d.g21).map(avisoHtml).join('');
 }
 async function pintarTrazos() {              // en el color del minero asignado; sin minero, líneas celestes y áreas blancas
   const ts = (await trazosTodos()).filter(pasaFiltro); capaLineas.clearLayers(); capaAreas.clearLayers();
@@ -1124,7 +1157,7 @@ async function datosExport() {
     t.area_m2 != null ? c((t.area_m2 / 10000).toFixed(2)) : '', t.area_m2 ?? '', t.vertices.length, q(t.tramos_m.map(c).join(' | ')), q(t.ctm.map(([e, n]) => `${e} ${n}`).join(' | ')), q(t.medicion || ''),
     t.area_trazada_m2 ? c((t.area_trazada_m2 / 10000).toFixed(2)) : '', t.veg_m2 ? c((t.veg_m2 / 10000).toFixed(2)) : '',
     t.tipo === 'area' ? (esFrente(t) ? 'sí' : 'no') : '', q(t.estado || ''), t.parado_desde || '', g && !g.sin ? Math.round(g.pct * 100) : (esFrente(t) ? 'sin imagen' : ''), f ? c(f.h) : '', f ? EST_T[f.est] : '', f ? c((f.A23 / 10000).toFixed(2)) : '', f && f.A ? Math.round(f.A23 / f.A * 100) : '',
-    f && f.ini ? isoMes(f.ini) : '', q(f ? alertasFrente(t, f.st, f.A, AN[t.upm].eq.cCorte).join(' | ') : ''), q((t.alertas_al_guardar || []).join(' | ')), t.ant ? q(t.ant.fecha) : '', q(t.calc ? t.calc.resumen.replace(/\n/g, ' ') : '')].join(';'); });
+    f && f.ini ? isoMes(f.ini) : '', q(f ? alertasFrente(t, f.st, f.A, AN[t.upm].eq.cCorte, G21[t.id]).map(avisoTxt).join(' | ') : ''), q((t.alertas_al_guardar || []).join(' | ')), t.ant ? q(t.ant.fecha) : '', q(t.calc ? t.calc.resumen.replace(/\n/g, ' ') : '')].join(';'); });
   const csvT = '﻿' + cabT.join(';') + '\n' + filasT.join('\n') + '\n';
   const cabM = ['minero', 'frentes', 'activos', 'inactivos', 'area_frentes_ha', 'intervenida_jul2023_al_menos_ha', 'intervenida_jul2023_pct', 'frentes_con_anterioridad', 'inicio_calculado', 'inicio_manifestado',
     'produccion_hoy_m3_ano', 'produccion_que_dice_m3_ano', 'produccion_observada_desde_corte_m3_ano', 'supera_165000', 'historia_equipos', 'motobombas_hoy', 'pulgadas_hoy', 'agua_por_grava',
