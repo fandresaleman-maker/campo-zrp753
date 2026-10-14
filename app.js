@@ -754,9 +754,9 @@ async function proponerVeg(vertices, areaM2, alAceptar, modo = 'todo') {   // mu
 /* ---------------- anterioridad: Sentinel por frente; equipos, inicio y escala por minero ---------------- */
 const CAUDAL = { 2: 20, 3: 45, 4: 80, 6: 180, 8: 320 };   // m³/h de agua por motobomba según pulgadas: orden de magnitud
 const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
-const EQUIPO = ['cRel', 'cHoras', 'cDias', 'cManif', 'cSemClima', 'cInicio', 'cCorte', 'cVisita'];
+const EQUIPO = ['cRel', 'cHoras', 'cDias', 'cManif', 'cInicio', 'cCorte', 'cVisita'];
 const HIST_BASE = [{ desde: '', n: 1, pulg: '4', caudal: 80 }];   // historia de equipos: la primera fila corre desde el inicio; las demás, desde su fecha
-const EQ_BASE = { cRel: 15, cHoras: 8, cDias: 6, cManif: '', cSemClima: 0, cInicio: '', cCorte: '2023-08-15', paradas: [], hist: HIST_BASE };
+const EQ_BASE = { cRel: 15, cHoras: 8, cDias: 6, cManif: '', cInicio: '', cCorte: '2023-08-15', paradas: [], hist: HIST_BASE };
 const PROF = 3, DIA = 86400000, UMBRAL = 165000, CORTE = '2023-08-15';
 let CALC = null, RESUMEN = '';
 const CACHE_S = new Map();
@@ -809,18 +809,21 @@ function difTxt(dice, calc) {                // cuánto antes o después del cal
   return m > 0 ? `${t} antes que el calculado` : `${t} después del calculado`;
 }
 // datos del minero en tres partes que se guardan por separado: equipos, paradas puntuales e inicio manifestado
-const PARTES = { eq: { ids: ['cRel', 'cHoras', 'cDias', 'cSemClima', 'cManif'], nombre: 'equipos' },
+const PARTES = { eq: { ids: ['cRel', 'cHoras', 'cDias'], nombre: 'equipos' }, man: { ids: ['cManif'], nombre: 'lo que dice remover' },
                  par: { ids: [], nombre: 'paradas' }, ini: { ids: ['cInicio'], nombre: 'inicio manifestado' } };
-const fechasDe = e => { if (!e) return { eq: null, par: null, ini: null }; const una = !e.guardado_eq && !e.guardado_par && !e.guardado_ini ? e.fecha : null;   // antes de la v19 se guardaba todo de una vez
-  return { eq: e.guardado_eq || una, par: e.guardado_par || una, ini: e.guardado_ini || una }; };
+const PARTES_K = ['eq', 'man', 'par', 'ini'];
+const fechasDe = e => { if (!e) return { eq: null, man: null, par: null, ini: null }; const una = !e.guardado_eq && !e.guardado_par && !e.guardado_ini ? e.fecha : null;   // antes de la v19 se guardaba todo de una vez
+  const man = 'guardado_man' in e ? e.guardado_man : nv(e.cManif) > 0 ? (e.guardado_eq || una) : null;   // antes de la v28 iba con los equipos
+  return { eq: e.guardado_eq || una, man, par: e.guardado_par || una, ini: e.guardado_ini || una }; };
 async function equiposDe(upm) {              // datos anotados del minero, o los predeterminados
   const e = ((await metaGet('equipos')) || {})[upm], corte = ((await metaGet('calcUltimo')) || {}).cCorte, partes = fechasDe(e);
   return { ...EQ_BASE, ...(corte ? { cCorte: corte } : {}), cVisita: hoyISO(), ...(e || {}), guardado: !!partes.eq, partes };
 }
-async function equiposGuardar(upm, eq, cuales = ['eq', 'par', 'ini']) {   // guarda solo las partes pedidas; las demás quedan como estaban
+async function equiposGuardar(upm, eq, cuales = PARTES_K) {   // guarda solo las partes pedidas; las demás quedan como estaban
   const todos = (await metaGet('equipos')) || {}, prev = todos[upm] || {}, f = fechaLocal(new Date()), antes = fechasDe(todos[upm]);
-  const nuevo = { ...prev, guardado_eq: antes.eq, guardado_par: antes.par, guardado_ini: antes.ini, cCorte: eq.cCorte, cVisita: eq.cVisita, fecha: f };
+  const nuevo = { ...prev, guardado_eq: antes.eq, guardado_man: antes.man, guardado_par: antes.par, guardado_ini: antes.ini, cCorte: eq.cCorte, cVisita: eq.cVisita, fecha: f };
   cuales.forEach(k => { PARTES[k].ids.forEach(id => { nuevo[id] = eq[id]; }); if (k === 'par') nuevo.paradas = eq.paradas; if (k === 'eq') nuevo.hist = eq.hist; nuevo['guardado_' + k] = f; });
+  if (cuales.includes('man') && !(nv(eq.cManif) > 0)) { nuevo.cManif = ''; nuevo.guardado_man = null; }   // sin cifra no queda guardada
   todos[upm] = nuevo; await metaSet('equipos', todos);
   return nuevo;
 }
@@ -831,10 +834,15 @@ function bloquearParte(k, on) {              // lo ya anotado queda precargado y
     if (k === 'eq') { $('cHist').querySelectorAll('input, select').forEach(i => { i.disabled = on; }); $('cHist').querySelectorAll('button').forEach(b => { b.style.visibility = on ? 'hidden' : ''; }); limiteHist(); } }
   const b = $('bG' + k), quien = CALC.upm.split(' ')[0];
   b.textContent = on ? `✎ Editar ${PARTES[k].nombre}` : `Guardar ${PARTES[k].nombre} de ${quien}`; b.classList.toggle('prim', !on);
+  if (k === 'man') $('bXman').style.display = on ? '' : 'none';
 }
 function notaEquipos() {
   const p = CALC.eq.partes, d = x => x ? x.slice(0, 10) : 'sin anotar';
-  $('cEqNota').textContent = p.eq || p.par || p.ini ? 'Ya anotado: vale para todos sus frentes. Para cambiarlo, toque «✎ Editar».' : 'Se anota una vez y vale para todos sus frentes, activos e inactivos.';
+  $('cEqNota').textContent = p.eq || p.man || p.par || p.ini ? 'Ya anotado: vale para todos sus frentes. Para cambiarlo, toque «✎ Editar».' : 'Se anota una vez y vale para todos sus frentes, activos e inactivos.';
+}
+async function eliminarDice() {             // borra lo que dice remover: el cálculo vuelve a sus equipos
+  $('cManif').value = ''; const g = await equiposGuardar(CALC.upm, eqForm(), ['man']); CALC.eq.partes = fechasDe(g);
+  bloquearParte('man', false); notaEquipos(); calcular(); avisar('Eliminado: el cálculo vuelve a sus equipos');
 }
 async function guardarParte(k) {
   if (CALC.bloq[k]) { bloquearParte(k, false); return; }   // estaba fijo: lo abre para editar
@@ -902,9 +910,11 @@ function analizar(frs, eq, profDe = profGuardada) {
   const fecha = (s, def) => { const d = new Date((s || def) + 'T00:00'); return isNaN(d) ? new Date(def + 'T00:00') : d; };
   const corte = fecha(eq.cCorte, CORTE), visita = fecha(eq.cVisita, hoyISO());
   const T = Math.max(0.01, (visita - corte) / DIA / 365.25);
-  const sem = Math.min(51, nv(eq.cSemClima)), fac = Math.min(7, nv(eq.cDias)) / 7 * (1 - sem / 52), P = eq.paradas || [];   // fracción del calendario que trabaja
-  const Pe = periodos(eq), horas = nv(eq.cHoras), hoy = Pe[Pe.length - 1];   // la última fila sigue hasta hoy
-  const capHoy = hoy.n * hoy.q * horas * 365.25 * fac;                         // m³/año con los equipos de hoy
+  const sem = 0, fac = Math.min(7, nv(eq.cDias)) / 7, P = eq.paradas || [];   // fracción de la semana que trabaja; lluvias y crecientes van como paradas
+  const Pe = periodos(eq), hoy = Pe[Pe.length - 1];   // la última fila sigue hasta hoy
+  const dHoy = hoy.n * hoy.q * nv(eq.cHoras), D = nv(eq.cManif), kd = D > 0 && dHoy > 0 ? D / dHoy : 1;   // m³ por día de trabajo con sus equipos de hoy; si dice cuánto remueve, se usa esa cifra
+  const horas = nv(eq.cHoras) * kd;                                            // horas efectivas: lo manifestado (equipos, o lo que dice remover)
+  const capHoy = hoy.n * hoy.q * horas * 365.25 * fac;                         // m³/año con lo manifestado hoy
   const F = frs.map(({ t, st }) => {
     const A = t.area_m2, h = profDe(t) || 0, e = evalSent(st, A), V = A * h, Vn = (A - e.A23) * h;
     const inactivo = t.estado === 'Inactivo', fin = inactivo && t.parado_desde ? mesISO(t.parado_desde) : visita;
@@ -942,7 +952,7 @@ function analizar(frs, eq, profDe = profGuardada) {
   histDe(eq).slice(1).forEach(r => { if (!r.desde) avisosHist.push(AV('falta', 'Falta un dato', 'Un cambio de equipos no tiene fecha, así que no se tuvo en cuenta.', '¿Desde cuándo tiene esas motobombas?', 'Anote el mes y el año en esa fila.'));
     else if (iniM && mesISO(r.desde) <= iniM) avisosHist.push(AV('no', '✗ Las fechas no cuadran', `Anotó un cambio de equipos en ${fmesISO(r.desde)}, antes del inicio que él dice (${fmes(iniM)}).`, '¿Cuándo empezó a trabajar y cuándo cambió de motobombas?', 'Corrija la fecha que esté mal.')); });
   return { F, A, A23, V, Vn, T, fac, sem, hoy, capHoy, corte, visita, fin, ini, iniM, hMed, capPost, AmaxPost, AeqPre: A - AmaxPost, hNec, diasTrab, avisosHist,
-    diasPost, rObs, rEq, rDice: nv(eq.cManif), k, sinCal, iniCal, todoNuevo,
+    diasPost, rObs, rEq, rDice: D, kd, dHoy, k, sinCal, iniCal, todoNuevo,
     nAct, nIn: F.length - nAct, nSi: F.filter(f => f.est === 'si').length, sinProf: F.filter(f => f.sinProf).map(f => f.t.codigo || '?'),
     prodHoy: nAct || !F.length ? capHoy : 0, prodDice: nv(eq.cManif) * 365.25 * fac, prodObs: Vn / T };
 }
@@ -970,7 +980,7 @@ function conclusion(R) {                     // conclusión de la UPM: ¿tiene a
 const mesCorte = (d, R) => d ? fmes(d) + (d >= R.corte ? ' (después del corte)' : '') : '—';
 function desdeCuando(R, eq, br = '<br>', tit = 'Desde cuándo trabaja (toda la UPM):') {   // con imágenes y equipos, solo con equipos, y lo que él dice
   return `${tit}${br}· según imágenes y equipos: ${R.todoNuevo ? 'después del corte (todo lo trazado se abrió desde julio de 2023)' : R.iniCal ? mesCorte(R.iniCal, R) : 'no se puede ajustar'}` +
-    `${br}· solo con sus equipos: ${R.ini ? mesCorte(R.ini, R) : '—'}${eq.guardado ? '' : ' (equipos sin anotar)'}${br}· lo que él dice: ${R.iniM ? fmes(R.iniM) : 'sin dato'}`;
+    `${br}· ${R.rDice > 0 ? 'con lo que dice remover' : 'solo con sus equipos'}: ${R.ini ? mesCorte(R.ini, R) : '—'}${eq.guardado || R.rDice > 0 ? '' : ' (equipos sin anotar)'}${br}· lo que él dice: ${R.iniM ? fmes(R.iniM) : 'sin dato'}`;
 }
 const GRAVE = { no: 0, falta: 1, duda: 2, ok: 3 };
 function avisosHtml(lista, max) {            // los más graves primero; los demás, plegados
@@ -982,11 +992,12 @@ function resumenMinero(upm, R, eq) {         // resultado del minero en pocas l�
   const ha = m2 => dec(m2 / 10000, 2), nF = R.F.length;
   if (!nF) return { html: `<b>${esc(upm)}</b>: sin frentes dibujados. Dibuje sus frentes, activos e inactivos, y márquelos como frente.`, txt: `${upm}: sin frentes dibujados.`, avisos: [] };
   const p = R.A > 0 ? Math.round(R.A23 / R.A * 100) : 0, cc = conclusion(R);
-  const l0 = `<b>Anterioridad:</b> ${cc.ant}<br><b>Escala:</b> ${cc.esc} Con sus equipos de hoy serían ${miles(R.prodHoy)} m³/año` + (R.nAct ? '.' : ' (no tiene frentes activos dibujados).');
-  const aj = !R.k ? `No se ajusta: ${R.sinCal}.` : R.k >= 0.5 && R.k <= 2 ? 'Imágenes y equipos coinciden.'
-    : R.k < 1 ? `Las imágenes muestran el ${Math.round(R.k * 100)} % de lo que dan sus equipos en teoría: el cálculo se ajusta a lo que muestran.`
-    : `Las imágenes muestran ${dec(R.k, 1)} veces lo que dan sus equipos: el cálculo se ajusta a lo que muestran.`;
-  const l2 = `<b>Ritmo desde el corte</b>, en m³ por día de trabajo: ` + (R.diasPost ? `imágenes ${miles(R.rObs)} · sus equipos ${miles(R.rEq)}` + (R.rDice > 0 ? ` · él dice ${miles(R.rDice)}` : '') + `. ${aj}` : `no aplica: ${R.sinCal}.`);
+  const l0 = `<b>Anterioridad:</b> ${cc.ant}<br><b>Escala:</b> ${cc.esc} Con ${R.rDice > 0 ? 'lo que dice remover' : 'sus equipos de hoy'} serían ${miles(R.prodHoy)} m³/año` + (R.nAct ? '.' : ' (no tiene frentes activos dibujados).');
+  const man = R.rDice > 0 ? 'lo que dice remover' : 'sus equipos';
+  const aj = !R.k ? `No se ajusta: ${R.sinCal}.` : R.k >= 0.5 && R.k <= 2 ? `Las imágenes y ${man} coinciden.`
+    : R.k < 1 ? `Las imágenes muestran el ${Math.round(R.k * 100)} % de ${man}: el cálculo se ajusta a lo que muestran.`
+    : `Las imágenes muestran ${dec(R.k, 1)} veces ${man}: el cálculo se ajusta a lo que muestran.`;
+  const l2 = `<b>Ritmo desde el corte</b>, en m³ por día de trabajo: ` + (R.diasPost ? `imágenes ${miles(R.rObs)} · ${man} ${miles(R.rEq)}. ${aj}` : `no aplica: ${R.sinCal}.`);
   const l3 = desdeCuando(R, eq).replace('Desde cuándo trabaja (toda la UPM):', '<b>Desde cuándo trabaja (toda la UPM):</b>');
   const fr = R.F.map(f => `${esc(f.t.codigo || '?')}${f.inactivo ? ' inactivo' : ''} ${SIMB[f.est]}`).join(' · ');
   const l5 = `<b>Frentes:</b> ${fr}` + (eq.guardado ? '' : '. Equipos sin anotar: se usan valores por defecto.');
@@ -1015,7 +1026,7 @@ async function abrirCalc(trazo) {            // desde un frente, o desde «Guard
   CALC = { trazo: trazo || null, upm, eq, frs: null, bloq: {} };
   EQUIPO.forEach(id => { $(id).value = eq[id] ?? ''; }); pintarParadas(eq.paradas || []); pintarHist(histDe(eq));
   $('cTitMin').textContent = 'Lo que dice el minero'; notaEquipos();
-  ['eq', 'par', 'ini'].forEach(k => bloquearParte(k, !!eq.partes[k])); $('cFrente').style.display = trazo ? '' : 'none';
+  PARTES_K.forEach(k => bloquearParte(k, !!eq.partes[k])); $('cFrente').style.display = trazo ? '' : 'none';
   $('cDet').open = false; $('cResFrente').innerHTML = ''; equivPrellenar(eq);
   $('cRes').innerHTML = '<p class="nota">Calculando con Sentinel…</p>';
   if (trazo) {
@@ -1031,12 +1042,16 @@ function agregarHist(r = {}, primera = false) {   // primera: «al empezar», si
   const d = document.createElement('div'); d.className = 'hist';
   d.innerHTML = (primera ? '<div class="et">Al empezar<span class="nota" data-ini></span></div>' : '<input type="month" class="h-desde" aria-label="Desde (mes y año)">') +
     '<span class="u" data-u="motobombas"><input inputmode="decimal" class="h-n" aria-label="Motobombas a la vez"></span>' + (primera ? '<span></span>' : '<button aria-label="Quitar cambio">×</button>') +
-    `<select class="h-pulg" aria-label="Pulgadas">${[2, 3, 4, 6, 8].map(p => `<option value="${p}">${p} pulgadas</option>`).join('')}</select><span class="u" data-u="m³/h"><input inputmode="decimal" class="h-q" aria-label="Caudal por bomba (m³/h)"></span>`;
+    `<select class="h-pulg" aria-label="Pulgadas">${[2, 3, 4, 6, 8].map(p => `<option value="${p}">${p} pulgadas</option>`).join('')}</select><span class="h-dia"></span><input type="hidden" class="h-q">`;
   const q = c => d.querySelector(c), n = q('.h-n'), pu = q('.h-pulg'), ca = q('.h-q');
   if (!primera) q('.h-desde').value = r.desde || ''; n.value = r.n ?? 1; pu.value = String(r.pulg || 4); ca.value = r.caudal ?? CAUDAL[pu.value];
   pu.onchange = () => { ca.value = CAUDAL[pu.value] || ''; calcular(); };
   if (!primera) q('button').onclick = () => { d.remove(); limiteHist(); calcular(); };
   $('cHist').appendChild(d);
+}
+function diaHist() {                      // lo que mueve cada fila, en m³ de material por día de trabajo
+  const rel = num('cRel') || 15, H = num('cHoras');
+  [...$('cHist').children].forEach(d => { const s = d.querySelector('.h-dia'), m = nv(d.querySelector('.h-n').value) * nv(d.querySelector('.h-q').value) / rel * H; s.textContent = m > 0 ? `≈ ${miles(m)} m³/día` : ''; });
 }
 function limiteHist() { $('bCHist').style.display = CALC && CALC.bloq && CALC.bloq.eq || $('cHist').children.length >= 5 ? 'none' : ''; }   // al empezar y hasta 4 cambios
 const leerHist = () => [...$('cHist').children].map((d, i) => { const q = c => d.querySelector(c); return { desde: i ? q('.h-desde').value : '', n: q('.h-n').value, pulg: q('.h-pulg').value, caudal: q('.h-q').value }; });
@@ -1053,38 +1068,28 @@ function agregarParada(p = {}) {
 }
 const leerParadas = () => [...$('cParadas').children].map(d => ({ mes: d.querySelector('.p-mes').value, semanas: d.querySelector('.p-sem').value, causa: d.querySelector('.p-causa').value.trim() })).filter(p => p.mes || nv(p.semanas) > 0 || p.causa);
 const eqForm = () => ({ ...Object.fromEntries(EQUIPO.map(id => [id, $(id).value])), paradas: leerParadas(), hist: leerHist(), guardado: CALC.eq.guardado });
-const QV = { orden: ['qN', 'qPulg', 'qRel'] };   // equivalencia: los dos últimos que se tocaron quedan fijos y se calcula el otro
+const QV = { orden: ['qN', 'qPulg'] };     // equivalencia: el último que se tocó queda fijo y se calcula el otro
 function equivPrellenar(eq) {
   const H = histDe(eq), hoy = H[H.length - 1] || {};
-  $('qPulg').value = String(hoy.pulg || 4); $('qRel').value = String(nv(eq.cRel) || 15).replace('.', ','); $('qN').value = '';
-  QV.orden = ['qN', 'qPulg', 'qRel'];
+  $('qPulg').value = String(hoy.pulg || 4); $('qN').value = ''; QV.orden = ['qN', 'qPulg'];
 }
-function equivalencia(eq) {                  // a cuántas motobombas de chorro, de cuántas pulgadas y con cuánta agua por grava equivale lo que dice remover
-  const D = nv(eq.cManif), H = nv(eq.cHoras);
+function equivalencia(eq) {                  // a cuántas motobombas de chorro, de cuántas pulgadas, equivale lo que dice remover
+  const D = nv(eq.cManif), H = nv(eq.cHoras), rel = nv(eq.cRel) || 15;
   $('cEquiv').style.display = D > 0 ? '' : 'none'; if (!(D > 0)) return;
-  const calc = QV.orden[0]; ['qN', 'qPulg', 'qRel'].forEach(id => $(id).classList.toggle('calcd', id === calc));
+  const calc = QV.orden[0]; ['qN', 'qPulg'].forEach(id => $(id).classList.toggle('calcd', id === calc));
   if (!(H > 0)) { $('qTxt').innerHTML = avisoHtml('Anote las horas de bombeo al día para calcular la equivalencia.'); return; }
-  let n = nv($('qN').value), q = CAUDAL[$('qPulg').value], rel = nv($('qRel').value), nota = '';
-  if (calc === 'qN') { if (q > 0 && rel > 0) { n = D * rel / (q * H); $('qN').value = dec(n, 1); } }
-  else if (calc === 'qRel') { if (n > 0 && q > 0) { rel = n * q * H / D; $('qRel').value = dec(rel, 1); } }
-  else if (n > 0 && rel > 0) {
-    const qn = D * rel / (n * H), p = Object.keys(CAUDAL).reduce((a, b) => Math.abs(Math.log(CAUDAL[b] / qn)) < Math.abs(Math.log(CAUDAL[a] / qn)) ? b : a);
-    $('qPulg').value = p; q = qn; nota = `Cada motobomba tendría que dar unos ${miles(qn)} m³/h de agua; una de ${p}" da unos ${CAUDAL[p]}.`;
-  }
-  Object.assign(QV, { n, q, rel });
-  const Hs = histDe(eq), hoy = Hs[Hs.length - 1] || {}, Dhoy = nv(hoy.n) * nv(hoy.caudal) / (nv(eq.cRel) || 15) * H, r = Dhoy > 0 ? D / Dhoy : null;
+  const porBomba = p => CAUDAL[p] / rel * H;   // m³ por día de trabajo que mueve una motobomba de p pulgadas
+  let nota = '';
+  if (calc === 'qN') $('qN').value = dec(D / porBomba($('qPulg').value), 1);
+  else { const n = nv($('qN').value); if (n > 0) {
+    const cada = D / n, p = Object.keys(CAUDAL).reduce((a, b) => Math.abs(Math.log(porBomba(b) / cada)) < Math.abs(Math.log(porBomba(a) / cada)) ? b : a);
+    $('qPulg').value = p; nota = `Cada una tendría que mover unos ${miles(cada)} m³/día; una de ${p}" mueve unos ${miles(porBomba(p))}.`; } }
+  const Hs = histDe(eq), hoy = Hs[Hs.length - 1] || {}, Dhoy = nv(hoy.n) * nv(hoy.caudal) / rel * H, r = Dhoy > 0 ? D / Dhoy : null;
   const eqs = `${dec(nv(hoy.n), 1).replace(',0', '')} de ${hoy.pulg}"`;
-  const msg = r == null ? '' : r > 2 ? avisoHtml(AV('no', '✗ No cuadra con sus equipos de hoy', `Con ${eqs} saldrían unos ${miles(Dhoy)} m³/día, y él dice ${miles(D)}.`, '¿Con qué equipos mueve eso? ¿Tiene más motobombas trabajando?', null))
+  const msg = r == null ? '' : r > 1.5 ? avisoHtml(AV('no', '✗ No cuadra con sus equipos de hoy', `Con ${eqs} saldrían unos ${miles(Dhoy)} m³/día, y él dice ${miles(D)}.`, '¿Con qué equipos mueve eso? ¿Tiene más motobombas trabajando?', null))
     : r < 0.5 ? avisoHtml(AV('duda', '? Dice menos de lo que dan sus equipos de hoy', `Con ${eqs} saldrían unos ${miles(Dhoy)} m³/día, y él dice ${miles(D)}.`, '¿Cuántas horas al día bombean de verdad?', null))
     : avisoHtml(AV('ok', '✓ Cuadra con sus equipos de hoy', `Con ${eqs} saldrían unos ${miles(Dhoy)} m³/día; él dice ${miles(D)}.`));
   $('qTxt').innerHTML = (nota ? `<p class="nota">${nota}</p>` : '') + msg;
-  $('bQUsar').style.display = CALC && CALC.bloq && CALC.bloq.eq ? 'none' : '';
-}
-function equivUsar() {                       // pasa la equivalencia a la fila de equipos de hoy y al agua por grava
-  if (CALC.bloq.eq) { avisar('Toque «✎ Editar equipos» para cambiarlos'); return; }
-  const filas = $('cHist').children, u = filas[filas.length - 1]; if (!u || !(QV.n > 0) || !(QV.q > 0) || !(QV.rel > 0)) return;
-  u.querySelector('.h-n').value = dec(QV.n, 1).replace(',0', ''); u.querySelector('.h-pulg').value = $('qPulg').value; u.querySelector('.h-q').value = Math.round(QV.q);
-  $('cRel').value = dec(QV.rel, 1).replace(',0', ''); calcular(); avisar('Pasado a los equipos de hoy: revise y guarde los equipos');
 }
 function cajaSentinel(st, A) {               // detalle del método relativo para el frente abierto
   const fm = f => { const [y, mo, dd] = f.split('-'); return `${+dd}-${MESES[+mo - 1]}-${y}`; }, ha = m2 => dec(m2 / 10000, 2);
@@ -1103,7 +1108,7 @@ function cajaSentinel(st, A) {               // detalle del método relativo par
 }
 function calcular() {
   if (!CALC || !CALC.frs) return;
-  const eq = eqForm(), tr = CALC.trazo, upm = CALC.upm, ha = m2 => dec(m2 / 10000, 2);
+  const eq = eqForm(), tr = CALC.trazo, upm = CALC.upm, ha = m2 => dec(m2 / 10000, 2); diaHist();
   const R = analizar(CALC.frs, eq, t => tr && t.id === tr.id ? num('cProf') : profGuardada(t)); CALC.R = R;
   const lineas = [`Cálculo de anterioridad (estimado) · ${upm} · ${fechaLocal(new Date()).slice(0, 16)}`,
     'Fuentes: áreas trazadas sobre Google y en campo (evidenciado); proporción ya intervenida en julio de 2023 calculada con Sentinel-2, con el límite bajo del margen; equipos, régimen, paradas, inicio y producción, manifestados salvo que se hayan visto; ritmo desde el corte medido con las imágenes y la profundidad de campo, usado para ajustar la capacidad teórica de los equipos; inicio calculado, capacidad y escala, calculados por la ANM.'];
@@ -1123,8 +1128,8 @@ function calcular() {
   $('cRes').innerHTML = `<div class="caja calc">${res.html}</div>` + avisosHtml(res.avisos, 2);
   equivalencia(eq);
   lineas.push(res.txt);
-  lineas.push(`Equipos (manifestados): motobombas de chorro a la vez ${histTxt(eq)} (${dec(nv(eq.cRel) || 15, 0)} m³ de agua por m³ de grava), ${dec(nv(eq.cHoras), 1)} h/día, ${dec(nv(eq.cDias), 1)} días/semana; paradas: ${dec(nv(eq.cSemClima), 1)} semanas cada año por clima` + (paradasTxt(eq.paradas) ? `; puntuales: ${paradasTxt(eq.paradas)}.` : '.') +
-    (nv(eq.cManif) > 0 ? ` Material que dice remover: ${miles(nv(eq.cManif))} m³ por día de trabajo.` : ''));
+  lineas.push(`Equipos (manifestados): motobombas de chorro a la vez ${histTxt(eq)} (${dec(nv(eq.cRel) || 15, 0)} m³ de agua por m³ de grava), ${dec(nv(eq.cHoras), 1)} h/día, ${dec(nv(eq.cDias), 1)} días/semana` + (paradasTxt(eq.paradas) ? `; paradas: ${paradasTxt(eq.paradas)}.` : '.') +
+    (R.rDice > 0 ? ` Material que dice remover: ${miles(R.rDice)} m³ por día de trabajo (con sus equipos de hoy serían ${miles(R.dHoy)}); el cálculo usa esa cifra.` : ''));
   if (R.F.length) lineas.push(`Ajuste con las imágenes: ` + (R.k ? `lo abierto desde jul-2023 (${miles(R.Vn)} m³) es el ${Math.round(R.k * 100)} % de lo que sus equipos movían en teoría en ese tiempo (${miles(R.capPost)} m³); con ese factor, inicio a más tardar ${R.todoNuevo ? 'después del corte (todo lo trazado se abrió desde julio de 2023)' : R.iniCal ? fmes(R.iniCal) : 'sin estimar'}.` : `no se hizo (${R.sinCal}).`));
   if (res.avisos.length) lineas.push('Avisos: ' + res.avisos.map(avisoTxt).join(' | '));
   RESUMEN = lineas.join('\n');
@@ -1133,7 +1138,7 @@ async function calcGuardar() {               // guarda los equipos del minero y,
   if (!CALC || !CALC.R) return;
   if (CALC.trazo && !(num('cProf') > 0)) { avisar('Anote la profundidad del frente (altura del talud + profundidad de la poza)'); $('cProf').focus(); return; }
   const eq = eqForm(), tr = CALC.trazo, g = await equiposGuardar(CALC.upm, eq); CALC.eq.partes = fechasDe(g); CALC.eq.guardado = true;
-  ['eq', 'par', 'ini'].forEach(k => bloquearParte(k, true)); notaEquipos();
+  PARTES_K.forEach(k => bloquearParte(k, k === 'man' ? nv(eq.cManif) > 0 : true)); notaEquipos();
   await metaSet('calcUltimo', { cCorte: eq.cCorte });
   let msg = `Equipos de ${CALC.upm} guardados`;
   if (tr) {
@@ -1240,11 +1245,11 @@ async function datosExport() {
   const csvT = '﻿' + cabT.join(';') + '\n' + filasT.join('\n') + '\n';
   const cabM = ['minero', 'frentes', 'activos', 'inactivos', 'area_frentes_ha', 'intervenida_jul2023_al_menos_ha', 'intervenida_jul2023_pct', 'frentes_con_anterioridad', 'inicio_calculado', 'inicio_manifestado',
     'produccion_hoy_m3_ano', 'material_que_dice_remover_m3_ano', 'produccion_observada_desde_corte_m3_ano', 'supera_165000_segun_lo_observado', 'historia_equipos', 'motobombas_hoy', 'pulgadas_hoy', 'agua_por_grava',
-    'horas_dia', 'dias_semana', 'semanas_paradas_clima_al_ano', 'paradas_puntuales', 'produccion_que_dice_m3_dia', 'fecha_corte', 'fecha_visita', 'equipos_anotados',
+    'horas_dia', 'dias_semana', 'paradas_puntuales', 'produccion_que_dice_m3_dia', 'fecha_corte', 'fecha_visita', 'equipos_anotados',
     'ritmo_imagenes_m3_dia', 'ritmo_equipos_m3_dia', 'factor_ajuste_imagenes', 'inicio_ajustado_con_imagenes', 'por_que_no_se_ajusto'];
   const filasM = Object.entries(AN).map(([u, { eq, R }]) => [q(u), R.F.length, R.nAct, R.nIn, c((R.A / 10000).toFixed(2)), c((R.A23 / 10000).toFixed(2)), R.A ? Math.round(R.A23 / R.A * 100) : '', R.nSi,
     R.ini ? isoMes(R.ini) : '', eq.cInicio || '', Math.round(R.prodHoy), Math.round(R.prodDice), Math.round(R.prodObs), R.prodObs > UMBRAL ? 'sí' : 'no',
-    q(histTxt(eq)), c(R.hoy.n), R.hoy.pulg, c(nv(eq.cRel)), c(nv(eq.cHoras)), c(nv(eq.cDias)), c(nv(eq.cSemClima)), q(paradasTxt(eq.paradas)), c(nv(eq.cManif)), eq.cCorte, eq.cVisita, eq.guardado ? 'sí' : 'no (valores por defecto)',
+    q(histTxt(eq)), c(R.hoy.n), R.hoy.pulg, c(nv(eq.cRel)), c(nv(eq.cHoras)), c(nv(eq.cDias)), q(paradasTxt(eq.paradas)), c(nv(eq.cManif)), eq.cCorte, eq.cVisita, eq.guardado ? 'sí' : 'no (valores por defecto)',
     R.diasPost ? Math.round(R.rObs) : '', R.diasPost ? Math.round(R.rEq) : '', R.k ? c(R.k.toFixed(2)) : '', R.iniCal ? isoMes(R.iniCal) : '', q(R.todoNuevo ? 'todo lo trazado se abrió después del corte' : R.k ? '' : R.sinCal)].join(';'));
   const csvM = filasM.length ? '﻿' + cabM.join(';') + '\n' + filasM.join('\n') + '\n' : '';
   const kc = vs => vs.map(([la, lo]) => `${lo},${la},0`).join(' ');
@@ -1356,9 +1361,8 @@ $('bVegNo').onclick = () => { $('pVeg').classList.remove('abierto'); capaVeg.cle
 document.querySelectorAll('.seg.opc').forEach(g => g.addEventListener('click', e => { const v = e.target.closest('button')?.dataset.v; if (v == null) return;
   segPoner(g.id, v); frRefrescar(g.id[0]); }));
 $('bCCopiar').onclick = calcCopiar; $('bCGuardar').onclick = calcGuardar;
-['qN', 'qPulg', 'qRel'].forEach(id => $(id).addEventListener('input', () => { QV.orden = [...QV.orden.filter(x => x !== id), id]; }));   // antes que el «input» del panel, que recalcula
-$('bQUsar').onclick = equivUsar;
-['eq', 'par', 'ini'].forEach(k => { $('bG' + k).onclick = () => guardarParte(k); });
+['qN', 'qPulg'].forEach(id => $(id).addEventListener('input', () => { QV.orden = [...QV.orden.filter(x => x !== id), id]; }));   // antes que el «input» del panel, que recalcula
+PARTES_K.forEach(k => { $('bG' + k).onclick = () => guardarParte(k); }); $('bXman').onclick = eliminarDice;
 $('bCCerrar').onclick = () => abrir(null);
 $('bECancelar').onclick = () => { if (EDIT && EDIT.desdeMapa) abrir(null); else abrirLista(); }; $('bEGuardar').onclick = guardarEdicion;
 $('bPunto').onclick = abrirNuevoPunto;

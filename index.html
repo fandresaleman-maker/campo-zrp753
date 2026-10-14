@@ -101,6 +101,7 @@
   .gbtn.prim { background:var(--navy); color:#fff; }
   #pCalc input:disabled, #pCalc select:disabled { background:#e9edf4; color:#1d1d1f; -webkit-text-fill-color:#1d1d1f; opacity:1; }
   .lmin { margin-top:6px; padding-top:6px; border-top:1px solid #e3e7ef; font-size:14px; color:#222; }
+  .hist .h-dia { font-size:14px; color:#5b6475; text-align:right; padding-right:4px; }
   .grid3 { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:2px 8px; }
   .panel .grid3 label { margin:6px 0 0; font-size:12px; line-height:1.25; display:flex; flex-direction:column; justify-content:space-between; }
   .grid3 input, .grid3 select { margin-top:3px; padding:8px; font-size:16px; min-width:0; }
@@ -241,21 +242,22 @@
 </div>
 <h3 class="sec" id="cTitMin">Lo que dice el minero</h3>
   <p class="nota" style="margin-top:0" id="cEqNota">Valen para todos sus frentes, activos e inactivos.</p>
-  <div class="caja" style="margin-top:6px"><b>Motobombas de chorro a la vez</b> <span class="nota">solo las del monitor (la de succión no se suma), sumando todos sus frentes. Cada fila: desde cuándo, cuántas, pulgadas y caudal; la última sigue hasta hoy.</span>
+<div class="caja" style="margin-top:6px"><b>Motobombas de chorro a la vez</b> <span class="nota">solo las del monitor (la de succión no se suma), sumando todos sus frentes. Cada fila: desde cuándo, cuántas y de cuántas pulgadas, con lo que mueven por día; la última sigue hasta hoy.</span>
     <div id="cHist"></div><button id="bCHist" class="mini">＋ Agregar cambio de equipos</button></div>
   <div class="grid2">
-    <label>m³ de agua por m³ de grava<input id="cRel" inputmode="decimal"></label>
+    <label>m³ de agua por m³ de grava <small>Se propone 15: el extremo eficiente de la literatura de minería hidráulica (10 a 160; 911 Metallurgist y Penn State). Es lo prudente: no infla la anterioridad.</small><input id="cRel" inputmode="decimal"></label>
     <label>Horas de bombeo al día<input id="cHoras" inputmode="decimal"></label>
-    <label>Días por semana<input id="cDias" inputmode="decimal"></label>
-    <label>Semanas paradas cada año por clima <small>lluvias, crecientes, verano sin agua</small><input id="cSemClima" inputmode="decimal"></label>
+<label>Días por semana<input id="cDias" inputmode="decimal"></label>
 </div>
+<button class="gbtn" id="bGeq">Guardar equipos</button>
 <div class="caja" style="margin-top:10px"><b>Material que dice remover</b> <span class="nota">todo lo removido (descapote, estéril y grava), en m³ por día de trabajo; solo si da una cifra.</span>
 <input id="cManif" inputmode="decimal" placeholder="m³ por día" style="margin-top:6px">
-<div id="cEquiv" style="display:none"><p class="nota">Equivale a: escriba dos y la app calcula la tercera (en amarillo).</p>
-<div class="grid3"><label>Motobombas de chorro<input id="qN" inputmode="decimal"></label><label>Pulgadas<select id="qPulg"><option>2</option><option>3</option><option>4</option><option>6</option><option>8</option></select></label><label>m³ de agua por m³ de grava<input id="qRel" inputmode="decimal"></label></div>
-<div id="qTxt"></div><button id="bQUsar" class="mini">Usar en equipos de hoy</button></div></div>
-  <button class="gbtn" id="bGeq">Guardar equipos</button>
-  <div class="caja" style="margin-top:10px"><b>Paradas puntuales</b> <span class="nota">las que él cuente: paro, operativo, daño, combustible…</span>
+<div id="cEquiv" style="display:none"><p class="nota">Equivale a (escriba uno y la app calcula el otro, en amarillo):</p>
+<div class="grid2"><label>Motobombas de chorro<input id="qN" inputmode="decimal"></label><label>Pulgadas<select id="qPulg"><option>2</option><option>3</option><option>4</option><option>6</option><option>8</option></select></label></div>
+<div id="qTxt"></div></div>
+<p class="nota">Al guardarlo, el cálculo usa esta cifra en vez de sus equipos; al eliminarlo, vuelve a sus equipos.</p>
+<button class="gbtn" id="bGman">Guardar lo que dice remover</button><button class="gbtn" id="bXman" style="display:none">Eliminar lo que dice remover</button></div>
+  <div class="caja" style="margin-top:10px"><b>Paradas puntuales</b> <span class="nota">las que él cuente: paro, operativo, lluvias o crecientes, daño, combustible…</span>
     <div id="cParadas"></div><button id="bCParada" class="mini">＋ Agregar parada</button>
     <button class="gbtn" id="bGpar">Guardar paradas</button></div>
 <label for="cInicio">Inicio que él dice (mes y año)</label><input id="cInicio" type="month">
@@ -268,7 +270,7 @@
 </div>
   <div class="fila"><button id="bCCopiar">Copiar resumen</button><button id="bCGuardar" class="prim">Guardar todo</button></div>
   <div class="fila"><button id="bCCerrar">Cerrar</button></div>
-  <p class="nota">Las áreas salen del trazo y la de julio de 2023 la calcula Sentinel («al menos»); para cambiarlas, corrija el trazo. El inicio que él dice se pregunta al final, sin mostrarle la pantalla. Si no dice paradas, van en 0: suponerlas haría ver más anterioridad de la que hay.</p>
+  <p class="nota">Las áreas salen del trazo y la de julio de 2023 la calcula Sentinel («al menos»); para cambiarlas, corrija el trazo. El inicio que él dice se pregunta al final, sin mostrarle la pantalla. Si no dice paradas, van en 0: suponerlas haría ver más anterioridad de la que hay. Las de lluvias o crecientes también van como paradas.</p>
 </div>
 
 <div class="panel" id="pLista"><h2>Lo guardado</h2>
