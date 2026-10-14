@@ -293,7 +293,7 @@ async function abrirLista() {
   $('listaFiltro').textContent = FILTRO === TODOS ? 'Todo lo tomado en campo.' : `Solo lo de: ${FILTRO}. Cambia el minero en la barra de abajo para ver lo demás.`;
   if (FILTRO !== TODOS) {                   // resumen del minero filtrado: anterioridad de sus frentes, inicio y escala
     const r = document.createElement('div'); r.className = 'caja'; r.style.marginBottom = '6px'; r.innerHTML = 'Calculando el resumen del minero…'; l.appendChild(r);
-    (async () => { const eq = await equiposDe(FILTRO); r.innerHTML = htmlMinero(FILTRO, analizar(await frentesDe(FILTRO), eq), eq, false); })().catch(() => { r.textContent = 'No se pudo calcular el resumen.'; });
+    (async () => { const eq = await equiposDe(FILTRO); const s = resumenMinero(FILTRO, analizar(await frentesDe(FILTRO), eq), eq); r.innerHTML = s.html + avisosHtml(s.avisos, 2); })().catch(() => { r.textContent = 'No se pudo calcular el resumen.'; });
   }
   if (!pts.length && !ts.length) l.insertAdjacentHTML('beforeend', '<p class="nota">Todavía no hay nada guardado.</p>');
   ts.forEach(t => {
@@ -352,14 +352,17 @@ function fichaPunto(p) {
   ficha([p.lat, p.lon], `<b>${esc(rotulo(p))}</b><br>${esc(p.upm)}<br>E ${miles(p.este)} · N ${miles(p.norte)}<br>${dec(p.lat, 6)}, ${dec(p.lon, 6)}` +
     (p.precision != null ? ` · ±${Math.round(p.precision)} m` : '') + ` · ${esc(p.origen)}` + pie(p), () => abrirEditar('puntos', p, true));
 }
-function fichaTrazo(t, ll) {
-  const med = t.tipo === 'area' ? `${areaTxt(t)} · perímetro ${distTxt(t.longitud_m)} · ${t.vertices.length} vértices<br>Centro: <b>E ${miles(centroCTM(t)[0])} · N ${miles(centroCTM(t)[1])}</b> (CTM12)` : `${distTxt(t.longitud_m)} · ${t.tramos_m.length} tramo(s)`;
-  const fr = esFrente(t);
-  const { d, pop } = ficha(ll, `<b>${esc(rotulo(t))}</b><br>${t.tipo === 'area' ? 'Área' : 'Línea'} · ${esc(queTxt(t))}${t.medicion ? ' · ' + esc(t.medicion) : ''}<br>${esc(t.upm)}<br>${med}` +
-    `<br>Tramos: ${t.tramos_m.map(distTxt).join(' · ')}` + pie(t) +
-    (fr ? '<div class="lmin" data-ant>Calculando anterioridad…</div>' : t.tipo === 'area' ? '<div class="lmin">No es frente: no lleva anterioridad. Si lo es, márquelo con «Editar».</div>' : ''),
+function fichaTrazo(t, ll) {                 // corta: quién, qué, cuánto, dónde y lo que dicen las imágenes
+  const fr = esFrente(t), area = t.tipo === 'area', pr = profGuardada(t), novis = t.medicion === MEDICION[1] ? ' · no visitado' : '';
+  let h = `<b>${esc(t.codigo || t.nombre || '')}</b> · `;
+  if (fr) h += `${esc(queTxt(t))} · ${haTxt(t.area_m2)} · ` + (pr ? `${dec(pr, 1)} m de profundidad` : '<span class="no">sin profundidad</span>') + novis;
+  else h += area ? `${esc(t.que || 'Área')} · ${haTxt(t.area_m2)}${novis}` : `${esc(t.que || 'Línea')} · ${distTxt(t.longitud_m)}`;
+  if (t.nombre && t.codigo) h += `<br>${esc(t.nombre)}`;
+  if (area) { const [E, N] = centroCTM(t); h += `<br>Centro: E ${miles(E)} · N ${miles(N)}`; }
+  if (t.nota) h += `<br>Nota: ${esc(t.nota)}`;
+  const { d, pop } = ficha(ll, h + (fr ? '<div class="lmin" data-ant>Mirando las imágenes…</div>' : area ? '<div class="lmin">No es frente: no lleva anterioridad. Si lo es, márquelo con «Editar».</div>' : ''),
     null, [[fr ? 'Editar frente' : 'Editar', () => abrirEditar('trazos', t, true)],
-      ...(fr ? [[t.ant ? 'Editar anterioridad' : 'Calcular anterioridad', () => abrirCalc(t)]] : []),
+      ...(fr ? [['Anterioridad', () => abrirCalc(t)]] : []),
       ...(t.tipo === 'area' && !t.veg_m2 ? [['Quitar árboles del área', () => proponerVeg(t.vertices, t.area_m2, r => aceptarVegTrazo(t, r))]] : [])]);
   if (fr) fichaAnt(t, d.querySelector('[data-ant]'), pop).catch(() => { d.querySelector('[data-ant]').textContent = 'No se pudo calcular la anterioridad.'; });
 }
@@ -520,7 +523,7 @@ function abrirEditar(almacen, r, desdeMapa = false) {
   const area = almacen === 'trazos' && r.tipo === 'area';
   $('eCodigo').textContent = r.codigo || r.nombre || '';
   $('eResumen').innerHTML = almacen === 'puntos' ? `<b>Punto</b> · E ${miles(r.este)} · N ${miles(r.norte)}${r.precision != null ? ' · ±' + Math.round(r.precision) + ' m' : ''}<br>${esc(r.local)}`
-    : (r.tipo === 'area' ? `<b>Área</b> · ${areaTxt(r)} · perímetro ${distTxt(r.longitud_m)}` : `<b>Línea</b> · ${distTxt(r.longitud_m)} · ${r.tramos_m.length} tramo(s)`) + `<br>${esc(r.local)}`;
+    : (r.tipo === 'area' ? `<b>Área</b> · ${haTxt(r.area_m2)} · centro E ${miles(centroCTM(r)[0])} · N ${miles(centroCTM(r)[1])}` : `<b>Línea</b> · ${distTxt(r.longitud_m)}`) + `<br>${esc(r.local)}`;
   $('eCorto').value = r.nombre || '';
   $('eFrBloque').style.display = area ? '' : 'none';
   $('eQueFila').style.display = almacen === 'trazos' && !area ? '' : 'none';
@@ -737,7 +740,7 @@ async function vegetacion(vertices, modo) {  // modo 'todo': deja solo arena, ag
 }
 let VEG = null, VEG_PROP = null;
 const capaVeg = L.layerGroup().addTo(map);
-async function proponerVeg(vertices, areaM2, alAceptar, modo = 'todo') {   // muestra en morado lo que se quitaría; Fabio acepta o descarta
+async function proponerVeg(vertices, areaM2, alAceptar, modo = 'todo') {   // muestra en morado lo que se quitaría; se acepta o se descarta
   $('vegTxt').innerHTML = 'Buscando vegetación en la imagen de Google…'; $('bVegSi').style.display = 'none'; $('pVeg').classList.add('abierto');
   let r = null; try { r = await vegetacion(vertices, modo); } catch (e) { r = null; }
   capaVeg.clearLayers();
@@ -831,8 +834,7 @@ function bloquearParte(k, on) {              // lo ya anotado queda precargado y
 }
 function notaEquipos() {
   const p = CALC.eq.partes, d = x => x ? x.slice(0, 10) : 'sin anotar';
-  $('cEqNota').textContent = p.eq || p.par || p.ini ? `Equipos: ${d(p.eq)} · paradas: ${d(p.par)} · inicio: ${d(p.ini)}. Lo anotado viene precargado en todos sus frentes; para cambiarlo, toque «✎ Editar» y vuelva a guardar.`
-    : 'Valen para todos sus frentes, activos e inactivos. Se anotan una vez y quedan precargados.';
+  $('cEqNota').textContent = p.eq || p.par || p.ini ? 'Ya anotado: vale para todos sus frentes. Para cambiarlo, toque «✎ Editar».' : 'Se anota una vez y vale para todos sus frentes, activos e inactivos.';
 }
 async function guardarParte(k) {
   if (CALC.bloq[k]) { bloquearParte(k, false); return; }   // estaba fijo: lo abre para editar
@@ -916,6 +918,21 @@ function analizar(frs, eq, profDe = profGuardada) {
   const Aprof = F.filter(f => !f.sinProf).reduce((a, f) => a + f.A, 0), iniM = mesISO(eq.cInicio), hMed = Aprof > 0 ? V / Aprof : PROF;
   const capPost = fin > corte ? qDias(Pe, P, fac, corte, fin) * horas : 0;   // m³ que pudo mover después del corte, con los equipos que tuvo desde entonces
   const AmaxPost = Math.min(A, capPost / hMed);
+  // ritmo desde el corte: lo abierto según las imágenes (× profundidad) frente a lo que sus equipos mueven en teoría;
+  // si hay base para compararlos, la capacidad de sus equipos se ajusta a lo observado y con eso se cuenta hacia atrás
+  const diasPost = fin > corte ? Math.max(1, ((fin - corte) / DIA - paradoDias(P, corte, fin)) * fac) : 0;
+  const rObs = diasPost ? Vn / diasPost : 0, rEq = diasPost ? capPost / diasPost : 0;   // m³ por día de trabajo
+  let k = null, sinCal = '';
+  if (!F.length) sinCal = 'no hay frentes dibujados';
+  else if (!(fin > corte)) sinCal = 'sus frentes pararon antes del corte';
+  else if (F.some(f => f.sinProf)) sinCal = 'falta la profundidad de algún frente';
+  else if (!F.some(f => f.est !== 'nc')) sinCal = 'sus frentes son muy pequeños para el satélite';
+  else if (!(capPost > 0)) sinCal = 'faltan los equipos';
+  else if (Vn < Math.max(1000, 0.1 * V)) sinCal = 'desde 2023 casi no abrió área nueva';
+  else if (Vn / capPost < 0.2) sinCal = 'lo abierto desde 2023 es menos de la quinta parte de lo que dan sus equipos';
+  else k = Vn / capPost;
+  const todoNuevo = F.length > 0 && F.every(f => f.est === 'no');   // todo lo trazado se abrió después de jul-2023: no hay inicio anterior que estimar
+  const iniCal = k && !todoNuevo ? inicioCon(Pe, P, fac, horas * k, fin, V) : null;   // «a más tardar»: lo nuevo se cuenta por lo alto, así que no infla la anterioridad
   let hNec = null, diasTrab = 0;
   if (iniM && iniM < fin && fac > 0 && V > 0) {   // horas de bombeo al día que harían falta desde el inicio que dice
     const cal = (fin - iniM) / DIA, qd = qDias(Pe, P, fac, iniM, fin) * Math.max(0, 1 - sinFecha(P) / Math.max(1, cal));
@@ -925,44 +942,85 @@ function analizar(frs, eq, profDe = profGuardada) {
   histDe(eq).slice(1).forEach(r => { if (!r.desde) avisosHist.push(AV('falta', 'Falta un dato', 'Un cambio de equipos no tiene fecha, así que no se tuvo en cuenta.', '¿Desde cuándo tiene esas motobombas?', 'Anote el mes y el año en esa fila.'));
     else if (iniM && mesISO(r.desde) <= iniM) avisosHist.push(AV('no', '✗ Las fechas no cuadran', `Anotó un cambio de equipos en ${fmesISO(r.desde)}, antes del inicio que él dice (${fmes(iniM)}).`, '¿Cuándo empezó a trabajar y cuándo cambió de motobombas?', 'Corrija la fecha que esté mal.')); });
   return { F, A, A23, V, Vn, T, fac, sem, hoy, capHoy, corte, visita, fin, ini, iniM, hMed, capPost, AmaxPost, AeqPre: A - AmaxPost, hNec, diasTrab, avisosHist,
+    diasPost, rObs, rEq, rDice: nv(eq.cManif), k, sinCal, iniCal, todoNuevo,
     nAct, nIn: F.length - nAct, nSi: F.filter(f => f.est === 'si').length, sinProf: F.filter(f => f.sinProf).map(f => f.t.codigo || '?'),
     prodHoy: nAct || !F.length ? capHoy : 0, prodDice: nv(eq.cManif) * 365.25 * fac, prodObs: Vn / T };
 }
-function htmlMinero(upm, R, eq, corto) {     // resumen del minero: una línea (ficha) o completo (Guardado y calculadora)
-  const ha = m2 => dec(m2 / 10000, 2), p = R.A > 0 ? Math.round(R.A23 / R.A * 100) : 0, nF = R.F.length;
-  if (!nF) return `<b>${esc(upm)}</b>: sin frentes dibujados. Dibuje sus frentes, activos e inactivos, y márquelos como frente.`;
-  const fr = `${nF} frente${nF > 1 ? 's' : ''} (${R.nAct} activo${R.nAct === 1 ? '' : 's'}, ${R.nIn} inactivo${R.nIn === 1 ? '' : 's'})`;
-  const ant = `al menos <b>${ha(R.A23)} de ${ha(R.A)} ha</b> ya intervenidas en jul-2023 (${p} %)`;
-  const ini = !R.ini ? 'inicio calculado: faltan equipos' : R.ini >= R.corte && R.nSi ? `inicio calculado con equipos ${fmes(R.ini)} (solo un límite: Sentinel ya ve intervención en jul-2023)`
-    : `inicio calculado <b>${fmes(R.ini)}</b> ` + (R.ini < R.corte ? '<b class="si">antes del corte</b>' : '<b class="no">después del corte</b>');
-  const dice = R.iniM ? ` · dice ${fmes(R.iniM)}` + (R.ini ? ` (${difTxt(R.iniM, R.ini)})` : '') : ' · inicio manifestado sin dato';
-  const sinEq = eq.guardado ? '' : ' <i>Equipos sin anotar: valores por defecto.</i>';
-  const alerta = R.iniM && R.iniM < R.corte && !R.F.some(f => f.est === 'si') && R.F.some(f => f.est === 'no')
-    ? avisoHtml(AV('no', '✗ No cuadra con lo que él dice', `Dice que empezó en ${fmes(R.iniM)}, pero todos los frentes que usted trazó se abrieron después de julio de 2023.`, '¿Dónde trabajaba antes de 2023? ¿Me muestra esos frentes?', 'Trace esos frentes viejos: sin ellos no hay prueba de anterioridad.')) : '';
-  if (corto) return `<b>Total de ${esc(upm)}</b> · ${fr} · ${ant} · ${ini}${dice}.${sinEq}` + (R.sinProf.length ? ` <i>Falta la profundidad de ${R.sinProf.join(', ')}.</i>` : '') + alerta;
-  const escala = `<b>Escala:</b> lo observado desde el corte da <b>${miles(R.prodObs)} m³/año</b> (área abierta desde jul-2023 × profundidad ÷ años) → ` +
-    (R.prodObs > UMBRAL ? '<b class="no">supera 165.000 m³/año</b>' : '<b class="si">bajo 165.000 m³/año</b>') +
-    `. Para contrastar: con sus equipos de hoy, ${miles(R.prodHoy)} m³/año` + (R.nAct ? '' : ' (no tiene frentes activos dibujados)') + (R.prodDice > 0 ? `; lo que dice remover, ${miles(R.prodDice)} m³/año` : '');
-  const avEscala = R.prodObs > UMBRAL ? avisoHtml(AV('no', '✗ Supera la pequeña minería', `Lo observado en las imágenes da ${miles(R.prodObs)} m³/año, más de 165.000.`, '¿Toda esta área es suya? ¿Desde cuándo trabaja estos frentes?', 'Revise que el trazo no incluya áreas de terceros o viejas y que la profundidad esté bien medida; si se confirma, la figura no aplica.'))
-    : R.prodHoy > UMBRAL || R.prodDice > UMBRAL ? avisoHtml(AV('duda', '? La escala no cuadra', `Lo observado está bajo 165.000 m³/año, pero ${R.prodHoy > UMBRAL ? 'lo que mueven sus equipos de hoy' : 'lo que dice remover'} lo supera.`, '¿Cuánto material remueve al año en total? ¿Trabajan todos los equipos a la vez?', 'Revise con él los equipos y la cifra; la escala se decide con lo observado.')) : '';
-  const avProf = R.sinProf.length ? avisoHtml(AV('falta', 'Falta un dato', `Falta la profundidad de ${R.sinProf.join(', ')}: sin ella no se calcula su volumen ni entra en la escala.`, '¿Qué altura tiene el talud y qué profundidad la poza?', 'Anótela con «Editar frente».')) : '';
-  const lista = R.F.map(f => `${esc(f.t.codigo || '')}${f.inactivo ? ' (inactivo)' : ''} ${SIMB[f.est]} ${f.est === 'nc' ? 'no concluyente' : Math.round(f.A23 / f.A * 100) + ' %'}`).join(' · ');
-  return `<b>Total de ${esc(upm)}</b> · ${fr} · ${ha(R.A)} ha<br><b>Anterioridad:</b> ${ant}; ${R.nSi} de ${nF} frente${nF > 1 ? 's' : ''} con ✓.<br>` +
-    `${ini.charAt(0).toUpperCase() + ini.slice(1)}${dice}.<br>${escala}.<br><span class="nota">Frentes: ${lista}` +
-    (paradasTxt(eq.paradas) ? `<br>Paradas puntuales: ${esc(paradasTxt(eq.paradas))}.` : '') + `</span>${sinEq}${avProf}${avEscala}${alerta}`;
+function veredicto(f, g21) {                 // lo que muestran las imágenes de este frente, en una frase clara
+  const p21 = g21 && !g21.sin ? Math.round(g21.pct * 100) : null, viejo21 = p21 != null && p21 >= 30, ha = m2 => dec(m2 / 10000, 2);
+  if (f.est === 'si') return `<b class="si">✓ Ya existía antes del corte:</b> en la imagen de julio de 2023 ya se ve intervenido, al menos ${ha(f.A23)} de ${ha(f.A)} ha` + (viejo21 ? ', y en enero de 2021 también.' : '.');
+  if (f.est === 'no' && viejo21) return '<b>? Las imágenes no coinciden:</b> en enero de 2021 ya estaba intervenido, en julio de 2023 se veía con monte y después se volvió a abrir.';
+  if (f.est === 'no') return '<b class="no">✗ Se abrió después del corte:</b> en la imagen de julio de 2023 este sitio todavía era bosque.';
+  if (viejo21) return `<b class="si">✓ Ya existía antes del corte:</b> en la imagen de enero de 2021 ya se ve intervenido (cerca del ${p21} %); el satélite de 2023 no alcanza a verlo bien.`;
+  return '<b>? No se puede saber con las imágenes:</b> ' + (f.est === 'nc' ? 'el frente es muy pequeño o angosto para el satélite.' : 'en julio de 2023 no se distingue si ya estaba.') +
+    (p21 != null && p21 < 10 ? ' En enero de 2021 todavía era bosque.' : '');
+}
+function conclusion(R) {                     // conclusión de la UPM: ¿tiene anterioridad? ¿es pequeña minería?
+  const ha = m2 => dec(m2 / 10000, 2), nF = R.F.length;
+  if (!nF) return { ant: 'sin frentes dibujados.', esc: 'sin frentes dibujados.' };
+  const ant = R.nSi ? `<b class="si">✓ Sí.</b> ${R.nSi} de ${nF} frente${nF > 1 ? 's' : ''} ya existía${R.nSi === 1 ? '' : 'n'} antes del corte: al menos ${ha(R.A23)} ha intervenidas en julio de 2023.`
+    : R.F.every(f => f.est === 'no') ? '<b class="no">✗ No, con lo trazado.</b> Todos sus frentes se abrieron después del corte.'
+    : !R.k && R.fin > R.corte && R.AeqPre > 500 && !(R.Vn > R.capPost * 1.2) ? `<b>? Probable, por sus equipos.</b> Las imágenes no alcanzan, pero después del corte sus equipos solo explican ${ha(R.AmaxPost)} ha; al menos ${ha(R.AeqPre)} ha serían anteriores.`
+    : '<b>? No se puede concluir con las imágenes.</b> Depende de lo visto en campo y de los documentos.';
+  const esc = R.sinProf.length ? `<b>? Falta la profundidad de ${R.sinProf.join(', ')}</b> para concluir.`
+    : R.prodObs > UMBRAL ? `<b class="no">✗ Supera la pequeña minería.</b> Lo observado da ${miles(R.prodObs)} m³/año, más de 165.000.`
+    : `<b class="si">✓ Pequeña minería.</b> Lo observado da ${miles(R.prodObs)} m³/año, menos de 165.000.`;
+  return { ant, esc };
+}
+const mesCorte = (d, R) => d ? fmes(d) + (d >= R.corte ? ' (después del corte)' : '') : '—';
+function desdeCuando(R, eq, br = '<br>', tit = 'Desde cuándo trabaja (toda la UPM):') {   // con imágenes y equipos, solo con equipos, y lo que él dice
+  return `${tit}${br}· según imágenes y equipos: ${R.todoNuevo ? 'después del corte (todo lo trazado se abrió desde julio de 2023)' : R.iniCal ? mesCorte(R.iniCal, R) : 'no se puede ajustar'}` +
+    `${br}· solo con sus equipos: ${R.ini ? mesCorte(R.ini, R) : '—'}${eq.guardado ? '' : ' (equipos sin anotar)'}${br}· lo que él dice: ${R.iniM ? fmes(R.iniM) : 'sin dato'}`;
+}
+const GRAVE = { no: 0, falta: 1, duda: 2, ok: 3 };
+function avisosHtml(lista, max) {            // los más graves primero; los demás, plegados
+  const s = [...lista].sort((a, b) => GRAVE[a.tipo] - GRAVE[b.tipo]), ver = s.slice(0, max), mas = s.slice(max);
+  return ver.map(avisoHtml).join('') + (mas.length ? `<details class="mas"><summary>Ver ${mas.length} aviso${mas.length > 1 ? 's' : ''} más</summary>${mas.map(avisoHtml).join('')}</details>` : '');
+}
+const avisoCorto = a => `<div class="${{ no: 'alerta', ok: 'okv', duda: 'cautela', falta: 'cautela' }[a.tipo]}"><b>${esc(a.titulo)}:</b> ${esc(a.que)}` + (a.pregunta ? ` Pregúntele: «${esc(a.pregunta)}»` : '') + '</div>';
+function resumenMinero(upm, R, eq) {         // resultado del minero en pocas líneas: imágenes, ritmo, desde cuándo y escala; avisos aparte
+  const ha = m2 => dec(m2 / 10000, 2), nF = R.F.length;
+  if (!nF) return { html: `<b>${esc(upm)}</b>: sin frentes dibujados. Dibuje sus frentes, activos e inactivos, y márquelos como frente.`, txt: `${upm}: sin frentes dibujados.`, avisos: [] };
+  const p = R.A > 0 ? Math.round(R.A23 / R.A * 100) : 0, cc = conclusion(R);
+  const l0 = `<b>Anterioridad:</b> ${cc.ant}<br><b>Escala:</b> ${cc.esc} Con sus equipos de hoy serían ${miles(R.prodHoy)} m³/año` + (R.nAct ? '.' : ' (no tiene frentes activos dibujados).');
+  const aj = !R.k ? `No se ajusta: ${R.sinCal}.` : R.k >= 0.5 && R.k <= 2 ? 'Imágenes y equipos coinciden.'
+    : R.k < 1 ? `Las imágenes muestran el ${Math.round(R.k * 100)} % de lo que dan sus equipos en teoría: el cálculo se ajusta a lo que muestran.`
+    : `Las imágenes muestran ${dec(R.k, 1)} veces lo que dan sus equipos: el cálculo se ajusta a lo que muestran.`;
+  const l2 = `<b>Ritmo desde el corte</b>, en m³ por día de trabajo: ` + (R.diasPost ? `imágenes ${miles(R.rObs)} · sus equipos ${miles(R.rEq)}` + (R.rDice > 0 ? ` · él dice ${miles(R.rDice)}` : '') + `. ${aj}` : `no aplica: ${R.sinCal}.`);
+  const l3 = desdeCuando(R, eq).replace('Desde cuándo trabaja (toda la UPM):', '<b>Desde cuándo trabaja (toda la UPM):</b>');
+  const fr = R.F.map(f => `${esc(f.t.codigo || '?')}${f.inactivo ? ' inactivo' : ''} ${SIMB[f.est]}`).join(' · ');
+  const l5 = `<b>Frentes:</b> ${fr}` + (eq.guardado ? '' : '. Equipos sin anotar: se usan valores por defecto.');
+  const av = [...R.avisosHist];
+  if (R.sinProf.length) av.push(AV('falta', 'Falta un dato', `Falta la profundidad de ${R.sinProf.join(', ')}: sin ella no se calcula su volumen ni entra en la escala.`, '¿Qué altura tiene el talud y qué profundidad la poza?', 'Anótela con «Editar frente».'));
+  if (R.prodObs > UMBRAL) av.push(AV('no', '✗ Supera la pequeña minería', `Lo observado en las imágenes da ${miles(R.prodObs)} m³/año, más de 165.000.`, '¿Toda esta área es suya? ¿Desde cuándo trabaja estos frentes?', 'Revise que el trazo no incluya áreas de terceros o viejas y que la profundidad esté bien medida; si se confirma, la figura no aplica.'));
+  else if (R.prodHoy > UMBRAL) av.push(AV('duda', '? La escala no cuadra', `Lo observado está bajo 165.000 m³/año, pero sus equipos de hoy lo superan (${miles(R.prodHoy)}).`, '¿Trabajan todos los equipos a la vez? ¿Cuántas horas al día?', 'Revise con él los equipos; la escala se decide con lo observado.'));
+  if (R.iniM && R.iniM < R.corte && !R.F.some(f => f.est === 'si') && R.F.some(f => f.est === 'no'))
+    av.push(AV('no', '✗ No cuadra con lo que él dice', `Dice que empezó en ${fmes(R.iniM)}, pero todos los frentes que usted trazó se abrieron después de julio de 2023.`, '¿Dónde trabajaba antes de 2023? ¿Me muestra esos frentes?', 'Trace esos frentes viejos: sin ellos no hay prueba de anterioridad.'));
+  if (R.fin > R.corte && R.capPost > 0 && R.Vn > R.capPost * 1.2)
+    av.push(AV('no', '✗ No cuadra con los equipos', 'Desde 2023 abrió más de lo que pueden mover las motobombas que dice tener.', '¿Cuántas motobombas tuvo trabajando desde 2023? ¿Alguien más trabaja estos frentes?', 'Corrija la historia de equipos con lo que diga; si hay otro minero, saque sus frentes.'));
+  if (!R.k && R.capPost > 0 && R.Vn >= Math.max(1000, 0.1 * R.V) && R.Vn / R.capPost < 0.2)
+    av.push(AV('duda', '? Trabaja menos de lo que dan sus equipos', 'Desde 2023 abrió menos de la quinta parte de lo que pueden mover las motobombas que dice.', '¿Cuántas horas al día bombean de verdad? ¿Trabajan todas a la vez?', 'Corrija horas, días o equipos con lo que diga.'));
+  const ref = R.iniCal || R.ini;
+  if (R.iniM && ref && R.iniM - ref > 365 * DIA && R.iniM < R.fin)
+    av.push(AV('no', '✗ No le alcanza el tiempo', `Dice que empezó en ${fmes(R.iniM)}, pero para abrir todo esto a su ritmo tendría que haber empezado hacia ${fmes(ref)}.`, '¿Empezó antes? ¿Tuvo más motobombas en algún momento?', 'Corrija el inicio o la historia de equipos con lo que diga. Si parte del área es de otro, sáquela.'));
+  if (R.iniM && R.iniM >= R.corte) av.push(AV('no', '✗ Su propio inicio es después del corte', `Él mismo dice que empezó en ${fmes(R.iniM)}, después de agosto de 2023.`, '¿Trabajó en esta zona antes de agosto de 2023, aunque fuera en otro frente?', 'Si dice que no, anótelo así: su declaración no respalda la anterioridad.'));
+  if (R.iniM && R.iniM >= R.fin) av.push(AV('no', '✗ Las fechas no cuadran', `Dice que empezó en ${fmes(R.iniM)}, pero según lo que usted marcó sus frentes ya estaban parados desde ${fmes(R.fin)}.`, '¿Cuándo empezó a trabajar aquí y cuándo dejó cada frente?', 'Corrija el inicio o las fechas de «Parado desde».'));
+  // sin ajuste con imágenes, el techo de sus equipos acota lo que pudo abrir después del corte: el resto tendría que ser anterior
+  const lin = [l0, l2, l3, l5];   // la imagen y el techo de los equipos ya van en la conclusión
+  return { html: lin.join('<br>'), txt: `${upm}. ` + sinHtml(lin.map(l => l === l3 ? desdeCuando(R, eq, ' ') : l).join(' ')), avisos: av };
 }
 async function abrirCalc(trazo) {            // desde un frente, o desde «Guardado» para todos los frentes del minero filtrado
   if (!trazo && FILTRO === TODOS) { avisar('Elija primero un minero en la barra de abajo'); return; }
   const upm = trazo ? trazo.upm : FILTRO, eq = await equiposDe(upm);
   CALC = { trazo: trazo || null, upm, eq, frs: null, bloq: {} };
   EQUIPO.forEach(id => { $(id).value = eq[id] ?? ''; }); pintarParadas(eq.paradas || []); pintarHist(histDe(eq));
-  $('cTitMin').textContent = `Datos de ${upm}`; notaEquipos();
+  $('cTitMin').textContent = 'Lo que dice el minero'; notaEquipos();
   ['eq', 'par', 'ini'].forEach(k => bloquearParte(k, !!eq.partes[k])); $('cFrente').style.display = trazo ? '' : 'none';
-  $('cSent').style.display = 'none'; $('cResFrente').innerHTML = ''; $('cInicioCalc').value = '…';
+  $('cDet').open = false; $('cResFrente').innerHTML = ''; equivPrellenar(eq);
   $('cRes').innerHTML = '<p class="nota">Calculando con Sentinel…</p>';
   if (trazo) {
     $('cArea').value = dec(trazo.area_m2 / 10000, 2); $('cProf').value = profGuardada(trazo) || ''; $('cA1').value = '…'; $('cNueva').value = '…';
-    $('cOrigen').innerHTML = `${esc(rotulo(trazo))} · ${esc(upm)} · ${esc(queTxt(trazo).toLowerCase())}${trazo.medicion ? ' · ' + esc(trazo.medicion) : ''}`;
+    $('cOrigen').innerHTML = `${esc(trazo.codigo || '')} · ${esc(queTxt(trazo))} · ${esc(upm)}${trazo.medicion === MEDICION[1] ? ' · no visitado' : ''}`;
   } else $('cOrigen').innerHTML = `${esc(upm)}: todos sus frentes, activos e inactivos.`;
   abrir('pCalc');
   CALC.frs = await frentesDe(upm, trazo); CALC.g21 = null; calcular();
@@ -995,6 +1053,39 @@ function agregarParada(p = {}) {
 }
 const leerParadas = () => [...$('cParadas').children].map(d => ({ mes: d.querySelector('.p-mes').value, semanas: d.querySelector('.p-sem').value, causa: d.querySelector('.p-causa').value.trim() })).filter(p => p.mes || nv(p.semanas) > 0 || p.causa);
 const eqForm = () => ({ ...Object.fromEntries(EQUIPO.map(id => [id, $(id).value])), paradas: leerParadas(), hist: leerHist(), guardado: CALC.eq.guardado });
+const QV = { orden: ['qN', 'qPulg', 'qRel'] };   // equivalencia: los dos últimos que se tocaron quedan fijos y se calcula el otro
+function equivPrellenar(eq) {
+  const H = histDe(eq), hoy = H[H.length - 1] || {};
+  $('qPulg').value = String(hoy.pulg || 4); $('qRel').value = String(nv(eq.cRel) || 15).replace('.', ','); $('qN').value = '';
+  QV.orden = ['qN', 'qPulg', 'qRel'];
+}
+function equivalencia(eq) {                  // a cuántas motobombas de chorro, de cuántas pulgadas y con cuánta agua por grava equivale lo que dice remover
+  const D = nv(eq.cManif), H = nv(eq.cHoras);
+  $('cEquiv').style.display = D > 0 ? '' : 'none'; if (!(D > 0)) return;
+  const calc = QV.orden[0]; ['qN', 'qPulg', 'qRel'].forEach(id => $(id).classList.toggle('calcd', id === calc));
+  if (!(H > 0)) { $('qTxt').innerHTML = avisoHtml('Anote las horas de bombeo al día para calcular la equivalencia.'); return; }
+  let n = nv($('qN').value), q = CAUDAL[$('qPulg').value], rel = nv($('qRel').value), nota = '';
+  if (calc === 'qN') { if (q > 0 && rel > 0) { n = D * rel / (q * H); $('qN').value = dec(n, 1); } }
+  else if (calc === 'qRel') { if (n > 0 && q > 0) { rel = n * q * H / D; $('qRel').value = dec(rel, 1); } }
+  else if (n > 0 && rel > 0) {
+    const qn = D * rel / (n * H), p = Object.keys(CAUDAL).reduce((a, b) => Math.abs(Math.log(CAUDAL[b] / qn)) < Math.abs(Math.log(CAUDAL[a] / qn)) ? b : a);
+    $('qPulg').value = p; q = qn; nota = `Cada motobomba tendría que dar unos ${miles(qn)} m³/h de agua; una de ${p}" da unos ${CAUDAL[p]}.`;
+  }
+  Object.assign(QV, { n, q, rel });
+  const Hs = histDe(eq), hoy = Hs[Hs.length - 1] || {}, Dhoy = nv(hoy.n) * nv(hoy.caudal) / (nv(eq.cRel) || 15) * H, r = Dhoy > 0 ? D / Dhoy : null;
+  const eqs = `${dec(nv(hoy.n), 1).replace(',0', '')} de ${hoy.pulg}"`;
+  const msg = r == null ? '' : r > 2 ? avisoHtml(AV('no', '✗ No cuadra con sus equipos de hoy', `Con ${eqs} saldrían unos ${miles(Dhoy)} m³/día, y él dice ${miles(D)}.`, '¿Con qué equipos mueve eso? ¿Tiene más motobombas trabajando?', null))
+    : r < 0.5 ? avisoHtml(AV('duda', '? Dice menos de lo que dan sus equipos de hoy', `Con ${eqs} saldrían unos ${miles(Dhoy)} m³/día, y él dice ${miles(D)}.`, '¿Cuántas horas al día bombean de verdad?', null))
+    : avisoHtml(AV('ok', '✓ Cuadra con sus equipos de hoy', `Con ${eqs} saldrían unos ${miles(Dhoy)} m³/día; él dice ${miles(D)}.`));
+  $('qTxt').innerHTML = (nota ? `<p class="nota">${nota}</p>` : '') + msg;
+  $('bQUsar').style.display = CALC && CALC.bloq && CALC.bloq.eq ? 'none' : '';
+}
+function equivUsar() {                       // pasa la equivalencia a la fila de equipos de hoy y al agua por grava
+  if (CALC.bloq.eq) { avisar('Toque «✎ Editar equipos» para cambiarlos'); return; }
+  const filas = $('cHist').children, u = filas[filas.length - 1]; if (!u || !(QV.n > 0) || !(QV.q > 0) || !(QV.rel > 0)) return;
+  u.querySelector('.h-n').value = dec(QV.n, 1).replace(',0', ''); u.querySelector('.h-pulg').value = $('qPulg').value; u.querySelector('.h-q').value = Math.round(QV.q);
+  $('cRel').value = dec(QV.rel, 1).replace(',0', ''); calcular(); avisar('Pasado a los equipos de hoy: revise y guarde los equipos');
+}
 function cajaSentinel(st, A) {               // detalle del método relativo para el frente abierto
   const fm = f => { const [y, mo, dd] = f.split('-'); return `${+dd}-${MESES[+mo - 1]}-${y}`; }, ha = m2 => dec(m2 / 10000, 2);
   let t = `<b>Calculado automáticamente con Sentinel</b>${st.fecha23 ? ` (${fm(st.fecha23)} frente a ${fm(st.fecha26)})` : ''}<br><span class="nota">Lo que es minería lo define tu trazo en Google; Sentinel solo compara ese mismo sitio en las dos fechas contra el bosque de alrededor.</span><br>`;
@@ -1015,47 +1106,27 @@ function calcular() {
   const eq = eqForm(), tr = CALC.trazo, upm = CALC.upm, ha = m2 => dec(m2 / 10000, 2);
   const R = analizar(CALC.frs, eq, t => tr && t.id === tr.id ? num('cProf') : profGuardada(t)); CALC.R = R;
   const lineas = [`Cálculo de anterioridad (estimado) · ${upm} · ${fechaLocal(new Date()).slice(0, 16)}`,
-    'Fuentes: áreas trazadas sobre Google y en campo (evidenciado); proporción ya intervenida en julio de 2023 calculada con Sentinel-2, con el límite bajo del margen; equipos, régimen, paradas, inicio y producción, manifestados salvo que se hayan visto; inicio calculado, capacidad y escala, calculados por la ANM.'];
-  $('cInicioCalc').value = R.ini ? fmes(R.ini) : '—';
+    'Fuentes: áreas trazadas sobre Google y en campo (evidenciado); proporción ya intervenida en julio de 2023 calculada con Sentinel-2, con el límite bajo del margen; equipos, régimen, paradas, inicio y producción, manifestados salvo que se hayan visto; ritmo desde el corte medido con las imágenes y la profundidad de campo, usado para ajustar la capacidad teórica de los equipos; inicio calculado, capacidad y escala, calculados por la ANM.'];
   const et = $('cHist').querySelector('[data-ini]'); if (et) et.textContent = eq.cInicio ? ` (${fmesISO(eq.cInicio)})` : '';
   if (tr) {
     const f = R.F.find(x => x.t.id === tr.id);
-    $('cA1').value = f.est === 'nc' ? 'no concluyente' : ha(f.A23); $('cNueva').value = ha(f.A - f.A23);
-    $('cSent').innerHTML = cajaSentinel(f.st, f.A); $('cSent').style.display = '';
-    let h = `<div class="caja calc">${textoEst(f)}<br>` + (f.sinProf ? '<b class="no">Falta la profundidad del frente (altura del talud + profundidad de la poza):</b> sin ella no se calcula su volumen.<br>' : `Volumen del frente: ${miles(f.V)} m³ (${ha(f.A)} ha × ${dec(f.h, 1)} m).<br>`);
-    h += f.ini ? `Inicio de este frente: <b>a más tardar ${fmes(f.ini)}</b> ${f.ini < R.corte ? '<b class="si">antes del corte</b>' : '<b class="no">después del corte</b>'}, si todos sus equipos hubieran trabajado solo aquí${f.inactivo && f.t.parado_desde ? ' hasta ' + fmesISO(f.t.parado_desde) : ''}.` : 'Inicio de este frente: faltan los equipos.';
-    const noEq = f.est === 'no' && f.ini && f.ini < R.corte ? [AV('no', '✗ No cuadra con los equipos', 'Las imágenes muestran que este frente se abrió después de 2023, pero con las motobombas que dice no le alcanzaba el tiempo para abrirlo.', '¿Cuántas motobombas trabajaron este frente? ¿Qué tan hondo es el corte?', 'Corrija la historia de equipos o la profundidad con lo que diga.')] : [];
-    if (f.est === 'si' && f.ini && f.ini >= R.corte) h += '<br>El cálculo con equipos solo da una fecha límite; la imagen de jul-2023 es evidencia directa y es la que vale.';
-    if (CALC.g21) h += '<br>' + texto21(CALC.g21);
-    $('cResFrente').innerHTML = h + '</div>' + [...noEq, ...contraste(tr, f.st, f.A, eq.cCorte, CALC.g21)].map(avisoHtml).join('');
+    $('cA1').value = f.est === 'nc' ? 'no se sabe' : ha(f.A23); $('cNueva').value = f.est === 'nc' ? 'no se sabe' : ha(f.A - f.A23);
+    $('cSent').innerHTML = cajaSentinel(f.st, f.A);
+    const h = `<div class="caja calc">${veredicto(f, CALC.g21)}<br>` + (f.sinProf ? '<b class="no">Falta la profundidad</b> (altura del talud + profundidad de la poza): sin ella no se calcula su volumen.' : `Volumen del frente: ${miles(f.V)} m³ (${ha(f.A)} ha × ${dec(f.h, 1)} m).`) + '</div>';
+    $('cResFrente').innerHTML = h + avisosHtml([...noCuadraEquipos(f, R), ...alertasFrente(tr, f.st, f.A, eq.cCorte, CALC.g21)], 1);
     lineas.push(`Frente ${tr.codigo || ''} (${queTxt(tr).toLowerCase()}): ${ha(f.A)} ha trazadas. ` +
-      (f.st && f.st.R != null && f.est !== 'nc' ? `Sentinel ${f.st.fecha23} frente a ${f.st.fecha26}, método relativo al bosque de alrededor (valor central ${Math.round(f.st.R * 100)} %, margen ${Math.round(f.st.Rmin * 100)}–${Math.round(f.st.Rmax * 100)} %): ` : '') + sinHtml(textoEst(f)) +
-      ` Profundidad ${dec(f.h, 1)} m, volumen ${miles(f.V)} m³.` + (f.ini ? ` Inicio de este frente a más tardar ${fmes(f.ini)}.` : '') + (CALC.g21 ? ' ' + texto21(CALC.g21) : '') +
+      (f.st && f.st.R != null && f.est !== 'nc' ? `Sentinel ${f.st.fecha23} frente a ${f.st.fecha26}, método relativo al bosque de alrededor (valor central ${Math.round(f.st.R * 100)} %, margen ${Math.round(f.st.Rmin * 100)}–${Math.round(f.st.Rmax * 100)} %): ` : '') + sinHtml(veredicto(f, CALC.g21)) +
+      ` Profundidad ${dec(f.h, 1)} m, volumen ${miles(f.V)} m³.` +
       (tr.veg_m2 ? ` Área trazada ${ha(tr.area_trazada_m2)} ha, sin ${ha(tr.veg_m2)} ha de vegetación detectada en Google.` : ''));
   }
-  let h = `<div class="caja calc">${htmlMinero(upm, R, eq, false)}</div>`;
-  h += R.avisosHist.map(avisoHtml).join('');
-  if (R.F.length && R.capHoy > 0) {
-    h += `<div class="caja calc"><b>Lo abierto después del corte frente a sus equipos:</b><br>Con los equipos que dice para cada época (${esc(histTxt(eq))}) y ${dec(R.fac * 7, 1)} días efectivos por semana; hoy mueve unos ${miles(R.capHoy)} m³/año.<br>` +
-      `Área nueva desde jul-2023 en todos sus frentes, activos e inactivos: ${ha(R.A - R.A23)} ha → ${miles(R.Vn)} m³. Sus equipos alcanzaban unos ${miles(R.capPost)} m³ desde el corte.<br>` +
-      (R.fin <= R.corte ? '' : R.Vn > R.capPost * 1.2 ? avisoHtml(AV('no', '✗ No cuadra con los equipos', 'Desde 2023 abrió más de lo que pueden mover las motobombas que dice tener.', '¿Cuántas motobombas tuvo trabajando desde 2023? ¿Alguien más trabaja estos frentes?', 'Corrija la historia de equipos con lo que diga; si hay otro minero, saque sus frentes.')) : '<b class="si">✓ Cuadra con sus equipos.</b>') +
-      (R.AeqPre > 500 && R.Vn <= R.capPost * 1.2 ? `<br>Por equipos, después del corte pudo abrir como máximo ${ha(R.AmaxPost)} ha: al menos ${ha(R.AeqPre)} ha tendrían que ser anteriores. Sirve sobre todo donde Sentinel no es concluyente.` : '') + '</div>';
-  }
-  if (R.hNec != null) {
-    const hh = dec(R.hNec, 1), ini = fmes(R.iniM);
-    h += R.hNec <= 10 ? avisoHtml(AV('ok', '✓ Cuadra con el inicio que dice', `Desde ${ini}, con sus equipos, le bastaba bombear unas ${hh} horas al día para abrir todo esto.`))
-      : R.hNec <= 16 ? avisoHtml(AV('duda', '? Es exigente', `Desde ${ini} habría tenido que bombear ${hh} horas al día para abrir todo esto.`, '¿Cuántas horas al día bombea? ¿Trabaja por turnos o de noche?', 'Corrija las horas o los equipos con lo que diga.'))
-      : avisoHtml(AV('no', '✗ No cuadra con el inicio que dice', `Para abrir todo esto desde ${ini} habría tenido que bombear ${hh} horas al día, más de lo posible.`, '¿Empezó antes? ¿Tuvo más motobombas en algún momento?', 'Corrija el inicio o la historia de equipos con lo que diga. Si parte del área es de otro, sáquela.'));
-  }
-  if (R.iniM && R.iniM >= R.corte) h += avisoHtml(AV('no', '✗ Su propio inicio es después del corte', `Él mismo dice que empezó en ${fmes(R.iniM)}, después de agosto de 2023.`, '¿Trabajó en esta zona antes de agosto de 2023, aunque fuera en otro frente?', 'Si dice que no, anótelo así: su declaración no respalda la anterioridad.'));
-  if (R.iniM && R.F.length && R.iniM >= R.fin) h += avisoHtml(AV('no', '✗ Las fechas no cuadran', `Dice que empezó en ${fmes(R.iniM)}, pero según lo que usted marcó sus frentes ya estaban parados desde ${fmes(R.fin)}.`, '¿Cuándo empezó a trabajar aquí y cuándo dejó cada frente?', 'Corrija el inicio o las fechas de «Parado desde».'));
-  $('cRes').innerHTML = h;
-  lineas.push(sinHtml(htmlMinero(upm, R, eq, false)).replace(/ · Frentes:/, '. Frentes:'));
-  lineas.push(`Equipos (manifestados): motobombas a la vez ${histTxt(eq)} (${dec(nv(eq.cRel) || 15, 0)} m³ de agua por m³ de grava), ${dec(nv(eq.cHoras), 1)} h/día, ${dec(nv(eq.cDias), 1)} días/semana; paradas: ${dec(nv(eq.cSemClima), 1)} semanas cada año por clima` + (paradasTxt(eq.paradas) ? `; puntuales: ${paradasTxt(eq.paradas)}.` : '.') +
-    (nv(eq.cManif) > 0 ? ` Material que dice remover: ${miles(nv(eq.cManif))} m³/día.` : ''));
-  if (R.F.length && R.capHoy > 0) lineas.push(`Inicio calculado ${R.ini ? fmes(R.ini) : 'sin estimar'} (volumen de todos sus frentes, ${miles(R.V)} m³, con los equipos de cada época). Área nueva desde jul-2023: ${ha(R.A - R.A23)} ha (${miles(R.Vn)} m³) frente a ${miles(R.capPost)} m³ que alcanzaban sus equipos: ` +
-    (R.Vn > R.capPost * 1.2 ? 'abrió más de lo que sus equipos explican.' : 'coherente.'));
-  if (R.hNec != null) lineas.push(`Con el inicio que dice (${fmes(R.iniM)}) habría tenido que bombear ${dec(R.hNec, 1)} h al día en ${miles(R.diasTrab)} días de trabajo.`);
+  const res = resumenMinero(upm, R, eq);
+  $('cRes').innerHTML = `<div class="caja calc">${res.html}</div>` + avisosHtml(res.avisos, 2);
+  equivalencia(eq);
+  lineas.push(res.txt);
+  lineas.push(`Equipos (manifestados): motobombas de chorro a la vez ${histTxt(eq)} (${dec(nv(eq.cRel) || 15, 0)} m³ de agua por m³ de grava), ${dec(nv(eq.cHoras), 1)} h/día, ${dec(nv(eq.cDias), 1)} días/semana; paradas: ${dec(nv(eq.cSemClima), 1)} semanas cada año por clima` + (paradasTxt(eq.paradas) ? `; puntuales: ${paradasTxt(eq.paradas)}.` : '.') +
+    (nv(eq.cManif) > 0 ? ` Material que dice remover: ${miles(nv(eq.cManif))} m³ por día de trabajo.` : ''));
+  if (R.F.length) lineas.push(`Ajuste con las imágenes: ` + (R.k ? `lo abierto desde jul-2023 (${miles(R.Vn)} m³) es el ${Math.round(R.k * 100)} % de lo que sus equipos movían en teoría en ese tiempo (${miles(R.capPost)} m³); con ese factor, inicio a más tardar ${R.todoNuevo ? 'después del corte (todo lo trazado se abrió desde julio de 2023)' : R.iniCal ? fmes(R.iniCal) : 'sin estimar'}.` : `no se hizo (${R.sinCal}).`));
+  if (res.avisos.length) lineas.push('Avisos: ' + res.avisos.map(avisoTxt).join(' | '));
   RESUMEN = lineas.join('\n');
 }
 async function calcGuardar() {               // guarda los equipos del minero y, si viene de un frente, su profundidad y resultado
@@ -1077,20 +1148,16 @@ async function calcGuardar() {               // guarda los equipos del minero y,
 async function calcCopiar() {
   try { await navigator.clipboard.writeText(RESUMEN); avisar('Resumen copiado'); } catch (e) { avisar('No se pudo copiar'); }
 }
-async function fichaAnt(t, el, pop) {        // en la ficha del frente: su anterioridad guardada y una línea del minero
+async function fichaAnt(t, el, pop) {        // en la ficha del frente: lo que dicen las imágenes, desde cuándo trabaja y, si hay, el aviso más importante
   const eq = await equiposDe(t.upm), R = analizar(await frentesDe(t.upm, t), eq), f = R.F.find(x => x.t.id === t.id);
-  let h;
-  if (t.ant) {
-    h = `<b>Anterioridad del frente</b> <span class="nota">(guardada ${esc(t.ant.fecha.slice(0, 16))})</span><br>${textoEst(f)}<br>` +
-      (!f.ini ? '' : f.est === 'si' && f.ini >= R.corte ? `Inicio calculado con equipos: a más tardar ${fmes(f.ini)}. <span class="nota">Es solo un límite: la imagen de jul-2023 ya lo muestra intervenido, y eso es lo que vale.</span><br>`
-        : `Inicio calculado: a más tardar <b>${fmes(f.ini)}</b>, ${f.ini < R.corte ? '<b class="si">antes de ago-2023</b>' : '<b class="no">después de ago-2023</b>'}<br>`) +
-      (R.iniM ? `Inicio manifestado: <b>${fmes(R.iniM)}</b>${f.ini ? ' (' + difTxt(R.iniM, f.ini) + ')' : ''}` : 'Inicio manifestado: sin dato');
-  } else h = `<b>Anterioridad del frente</b> <span class="nota">(sin guardar)</span><br>${textoEst(f)}`;
   let g21 = null; try { g21 = await verde21(t.vertices); } catch (e) {}
-  h += '<br>' + texto21(g21) + contraste(t, f.st, f.A, eq.cCorte, g21).map(avisoHtml).join('');
-  el.innerHTML = h + `<div class="lmin">${htmlMinero(t.upm, R, eq, true)}</div>`;
+  const av = [...noCuadraEquipos(f, R), ...alertasFrente(t, f.st, f.A, eq.cCorte, g21)].sort((a, b) => GRAVE[a.tipo] - GRAVE[b.tipo]);
+  const cc = conclusion(R);
+  el.innerHTML = `<b>Este frente:</b> ${veredicto(f, g21)}<div class="lmin"><b>Conclusión de la UPM</b><br>· Anterioridad: ${cc.ant}<br>· Escala: ${cc.esc}<br>` +
+    desdeCuando(R, eq, '<br>&nbsp;&nbsp;', '· Desde cuándo trabaja:') + '</div>' + (av.length ? avisoCorto(av[0]) : '');
   if (pop && pop.isOpen()) pop.update();
 }
+const noCuadraEquipos = (f, R) => f.est === 'no' && f.ini && f.ini < R.corte ? [AV('no', '✗ No cuadra con los equipos', 'Las imágenes muestran que este frente se abrió después de 2023, pero con las motobombas que dice no le alcanzaba el tiempo para abrirlo.', '¿Cuántas motobombas trabajaron este frente? ¿Qué tan hondo es el corte?', 'Corrija la historia de equipos o la profundidad con lo que diga.')] : [];
 
 const PANEL_SENT = { t: null, e: null };
 function alertasFrente(fr, st, A, corteISO, g21) { // lo marcado que contradice las imágenes; no bloquea, guía
@@ -1124,13 +1191,13 @@ async function vistaSentinel(x, vertices, A) { // al guardar o editar un área: 
   let g21 = null; try { g21 = await verde21(vertices); } catch (e) {}
   PANEL_SENT[x] = { st, A, g21 }; const e = evalSent(st, A);
   const nuevo = e.est === 'nc' ? 0 : A * (1 - st.Rmax);
-  box.innerHTML = '<b>Lo que ven las imágenes en este trazo</b><br>' + (e.est === 'nc' ? 'Satélite: el trazo es muy pequeño o angosto para verlo.'
-    : `Satélite: en julio de 2023 ya estaba intervenido cerca del ${Math.round(st.R * 100)} %` + (nuevo >= 500 ? `; después se abrieron unas ${dec(nuevo / 10000, 2)} ha más.` : '; después casi no creció.')) + '<br>' + texto21(g21);
+  box.innerHTML = '<b>Lo que muestran las imágenes:</b> ' + (e.est === 'nc' ? 'el trazo es muy pequeño o angosto para el satélite.'
+    : `en julio de 2023 ya estaba intervenido cerca del ${Math.round(st.R * 100)} %` + (nuevo >= 500 ? `; después se abrieron unas ${dec(nuevo / 10000, 2)} ha más.` : '; después casi no creció.')) + ' ' + texto21(g21);
   alertasPanel(x);
 }
 function alertasPanel(x) {
   const el = $(x + 'Alerta'), d = PANEL_SENT[x]; if (!el) return; if (!d) { el.innerHTML = ''; return; }
-  const fr = frLeer(x); el.innerHTML = fr.falta || !fr.frente ? '' : contraste(fr, d.st, d.A, null, d.g21).map(avisoHtml).join('');
+  const fr = frLeer(x); el.innerHTML = fr.falta || !fr.frente ? '' : contraste(fr, d.st, d.A, null, d.g21).filter(a => a.titulo !== '✓ Cuadra').map(avisoHtml).join('');   // el ✓ simple ya lo dice el recuadro de imágenes
 }
 async function pintarTrazos() {              // en el color del minero asignado; sin minero, líneas celestes y áreas blancas
   const ts = (await trazosTodos()).filter(pasaFiltro); capaLineas.clearLayers(); capaAreas.clearLayers();
@@ -1173,10 +1240,12 @@ async function datosExport() {
   const csvT = '﻿' + cabT.join(';') + '\n' + filasT.join('\n') + '\n';
   const cabM = ['minero', 'frentes', 'activos', 'inactivos', 'area_frentes_ha', 'intervenida_jul2023_al_menos_ha', 'intervenida_jul2023_pct', 'frentes_con_anterioridad', 'inicio_calculado', 'inicio_manifestado',
     'produccion_hoy_m3_ano', 'material_que_dice_remover_m3_ano', 'produccion_observada_desde_corte_m3_ano', 'supera_165000_segun_lo_observado', 'historia_equipos', 'motobombas_hoy', 'pulgadas_hoy', 'agua_por_grava',
-    'horas_dia', 'dias_semana', 'semanas_paradas_clima_al_ano', 'paradas_puntuales', 'produccion_que_dice_m3_dia', 'fecha_corte', 'fecha_visita', 'equipos_anotados'];
+    'horas_dia', 'dias_semana', 'semanas_paradas_clima_al_ano', 'paradas_puntuales', 'produccion_que_dice_m3_dia', 'fecha_corte', 'fecha_visita', 'equipos_anotados',
+    'ritmo_imagenes_m3_dia', 'ritmo_equipos_m3_dia', 'factor_ajuste_imagenes', 'inicio_ajustado_con_imagenes', 'por_que_no_se_ajusto'];
   const filasM = Object.entries(AN).map(([u, { eq, R }]) => [q(u), R.F.length, R.nAct, R.nIn, c((R.A / 10000).toFixed(2)), c((R.A23 / 10000).toFixed(2)), R.A ? Math.round(R.A23 / R.A * 100) : '', R.nSi,
     R.ini ? isoMes(R.ini) : '', eq.cInicio || '', Math.round(R.prodHoy), Math.round(R.prodDice), Math.round(R.prodObs), R.prodObs > UMBRAL ? 'sí' : 'no',
-    q(histTxt(eq)), c(R.hoy.n), R.hoy.pulg, c(nv(eq.cRel)), c(nv(eq.cHoras)), c(nv(eq.cDias)), c(nv(eq.cSemClima)), q(paradasTxt(eq.paradas)), c(nv(eq.cManif)), eq.cCorte, eq.cVisita, eq.guardado ? 'sí' : 'no (valores por defecto)'].join(';'));
+    q(histTxt(eq)), c(R.hoy.n), R.hoy.pulg, c(nv(eq.cRel)), c(nv(eq.cHoras)), c(nv(eq.cDias)), c(nv(eq.cSemClima)), q(paradasTxt(eq.paradas)), c(nv(eq.cManif)), eq.cCorte, eq.cVisita, eq.guardado ? 'sí' : 'no (valores por defecto)',
+    R.diasPost ? Math.round(R.rObs) : '', R.diasPost ? Math.round(R.rEq) : '', R.k ? c(R.k.toFixed(2)) : '', R.iniCal ? isoMes(R.iniCal) : '', q(R.todoNuevo ? 'todo lo trazado se abrió después del corte' : R.k ? '' : R.sinCal)].join(';'));
   const csvM = filasM.length ? '﻿' + cabM.join(';') + '\n' + filasM.join('\n') + '\n' : '';
   const kc = vs => vs.map(([la, lo]) => `${lo},${la},0`).join(' ');
   const descT = t => `${t.que} · ${t.upm} · ${t.local} · ` + (t.tipo === 'area' ? `${haTxt(t.area_m2)} · perímetro ${t.longitud_m} m` : `${t.longitud_m} m`) + ` · tramos (m): ${t.tramos_m.join(', ')}${t.nota ? ' · ' + t.nota : ''}`;
@@ -1287,6 +1356,8 @@ $('bVegNo').onclick = () => { $('pVeg').classList.remove('abierto'); capaVeg.cle
 document.querySelectorAll('.seg.opc').forEach(g => g.addEventListener('click', e => { const v = e.target.closest('button')?.dataset.v; if (v == null) return;
   segPoner(g.id, v); frRefrescar(g.id[0]); }));
 $('bCCopiar').onclick = calcCopiar; $('bCGuardar').onclick = calcGuardar;
+['qN', 'qPulg', 'qRel'].forEach(id => $(id).addEventListener('input', () => { QV.orden = [...QV.orden.filter(x => x !== id), id]; }));   // antes que el «input» del panel, que recalcula
+$('bQUsar').onclick = equivUsar;
 ['eq', 'par', 'ini'].forEach(k => { $('bG' + k).onclick = () => guardarParte(k); });
 $('bCCerrar').onclick = () => abrir(null);
 $('bECancelar').onclick = () => { if (EDIT && EDIT.desdeMapa) abrir(null); else abrirLista(); }; $('bEGuardar').onclick = guardarEdicion;
