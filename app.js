@@ -354,7 +354,7 @@ function fichaPunto(p) {
 }
 function fichaTrazo(t, ll) {                 // corta: quién, qué, cuánto, dónde y lo que dicen las imágenes
   const fr = esFrente(t), area = t.tipo === 'area', pr = profGuardada(t), novis = t.medicion === MEDICION[1] ? ' · no visitado' : '';
-  let h = `<b>${esc(t.codigo || t.nombre || '')}</b> · `;
+  let h = `<b>${esc(t.codigo || t.nombre || '')}</b> · ${esc(t.upm)}<br>`;
   if (fr) h += `${esc(queTxt(t))} · ${haTxt(t.area_m2)} · ` + (pr ? `${dec(pr, 1)} m de profundidad` : '<span class="no">sin profundidad</span>') + novis;
   else h += area ? `${esc(t.que || 'Área')} · ${haTxt(t.area_m2)}${novis}` : `${esc(t.que || 'Línea')} · ${distTxt(t.longitud_m)}`;
   if (t.nombre && t.codigo) h += `<br>${esc(t.nombre)}`;
@@ -952,7 +952,7 @@ function analizar(frs, eq, profDe = profGuardada) {
   histDe(eq).slice(1).forEach(r => { if (!r.desde) avisosHist.push(AV('falta', 'Falta un dato', 'Un cambio de equipos no tiene fecha, así que no se tuvo en cuenta.', '¿Desde cuándo tiene esas motobombas?', 'Anote el mes y el año en esa fila.'));
     else if (iniM && mesISO(r.desde) <= iniM) avisosHist.push(AV('no', '✗ Las fechas no cuadran', `Anotó un cambio de equipos en ${fmesISO(r.desde)}, antes del inicio que él dice (${fmes(iniM)}).`, '¿Cuándo empezó a trabajar y cuándo cambió de motobombas?', 'Corrija la fecha que esté mal.')); });
   return { F, A, A23, V, Vn, T, fac, sem, hoy, capHoy, corte, visita, fin, ini, iniM, hMed, capPost, AmaxPost, AeqPre: A - AmaxPost, hNec, diasTrab, avisosHist,
-    diasPost, rObs, rEq, rDice: D, kd, dHoy, k, sinCal, iniCal, todoNuevo,
+    diasPost, rObs, rEq, rDice: D, kd, dHoy, k, sinCal, iniCal, todoNuevo, eq, horasDia: nv(eq.cHoras),
     nAct, nIn: F.length - nAct, nSi: F.filter(f => f.est === 'si').length, sinProf: F.filter(f => f.sinProf).map(f => f.t.codigo || '?'),
     prodHoy: nAct || !F.length ? capHoy : 0, prodDice: nv(eq.cManif) * 365.25 * fac, prodObs: Vn / T };
 }
@@ -973,9 +973,16 @@ function conclusion(R) {                     // conclusión de la UPM: ¿tiene a
     : !R.k && R.fin > R.corte && R.AeqPre > 500 && !(R.Vn > R.capPost * 1.2) ? `<b>? Probable, por sus equipos.</b> Las imágenes no alcanzan, pero después del corte sus equipos solo explican ${ha(R.AmaxPost)} ha; al menos ${ha(R.AeqPre)} ha serían anteriores.`
     : '<b>? No se puede concluir con las imágenes.</b> Depende de lo visto en campo y de los documentos.';
   const esc = R.sinProf.length ? `<b>? Falta la profundidad de ${R.sinProf.join(', ')}</b> para concluir.`
-    : R.prodObs > UMBRAL ? `<b class="no">✗ Supera la pequeña minería.</b> Lo observado da ${miles(R.prodObs)} m³/año, más de 165.000.`
-    : `<b class="si">✓ Pequeña minería.</b> Lo observado da ${miles(R.prodObs)} m³/año, menos de 165.000.`;
+    : R.prodObs > UMBRAL ? '<b class="no">✗ Supera la pequeña minería</b> (más de 165.000 m³/año según las imágenes).'
+    : '<b class="si">✓ Pequeña minería</b> (menos de 165.000 m³/año según las imágenes).';
   return { ant, esc };
+}
+function escalaLineas(R, como) {             // las dos cifras de escala: la evidenciada (decide) y la manifestada (contraste); con «como», de dónde sale cada una
+  const nueva = R.A - R.A23, hN = nueva > 0 ? R.Vn / nueva : 0, man = R.rDice > 0 ? 'lo que dice remover' : 'sus equipos';
+  const ev = `· según las imágenes (evidenciado): ${miles(R.prodObs)} m³/año` + (como && nueva > 0 ? ` = ${dec(nueva / 10000, 2)} ha nuevas desde jul-2023 × ${dec(hN, 1)} m ÷ ${dec(R.T, 1)} años` : '');
+  const ma = !R.nAct ? `· según ${man} (manifestado): no tiene frentes activos` : `· según ${man} (manifestado): ${miles(R.prodHoy)} m³/año` +
+    (como ? ` = ${miles(R.rDice > 0 ? R.rDice : R.dHoy)} m³/día` + (R.rDice > 0 ? '' : ` (${esc(histTxt({ hist: [histDe(R.eq).slice(-1)[0]] }).replace('al empezar ', ''))} × ${dec(R.horasDia, 1)} h)`) + ` × ${dec(R.fac * 7, 1)} días a la semana todo el año` : '');
+  return ev + '<br>' + ma;
 }
 const mesCorte = (d, R) => d ? fmes(d) + (d >= R.corte ? ' (después del corte)' : '') : '—';
 function desdeCuando(R, eq, br = '<br>', tit = 'Desde cuándo trabaja (toda la UPM):') {   // con imágenes y equipos, solo con equipos, y lo que él dice
@@ -992,13 +999,13 @@ function resumenMinero(upm, R, eq) {         // resultado del minero en pocas l�
   const ha = m2 => dec(m2 / 10000, 2), nF = R.F.length;
   if (!nF) return { html: `<b>${esc(upm)}</b>: sin frentes dibujados. Dibuje sus frentes, activos e inactivos, y márquelos como frente.`, txt: `${upm}: sin frentes dibujados.`, avisos: [] };
   const p = R.A > 0 ? Math.round(R.A23 / R.A * 100) : 0, cc = conclusion(R);
-  const l0 = `<b>Anterioridad:</b> ${cc.ant}<br><b>Escala:</b> ${cc.esc} Con ${R.rDice > 0 ? 'lo que dice remover' : 'sus equipos de hoy'} serían ${miles(R.prodHoy)} m³/año` + (R.nAct ? '.' : ' (no tiene frentes activos dibujados).');
+  const l0 = `<b>Anterioridad:</b> ${cc.ant}<div class="sub">${desdeCuando(R, eq, '<br>', 'Desde cuándo trabaja:')}</div><b>Escala:</b> ${cc.esc}<div class="sub">${escalaLineas(R, true)}</div>`;
   const man = R.rDice > 0 ? 'lo que dice remover' : 'sus equipos';
   const aj = !R.k ? `No se ajusta: ${R.sinCal}.` : R.k >= 0.5 && R.k <= 2 ? `Las imágenes y ${man} coinciden.`
     : R.k < 1 ? `Las imágenes muestran el ${Math.round(R.k * 100)} % de ${man}: el cálculo se ajusta a lo que muestran.`
     : `Las imágenes muestran ${dec(R.k, 1)} veces ${man}: el cálculo se ajusta a lo que muestran.`;
   const l2 = `<b>Ritmo desde el corte</b>, en m³ por día de trabajo: ` + (R.diasPost ? `imágenes ${miles(R.rObs)} · ${man} ${miles(R.rEq)}. ${aj}` : `no aplica: ${R.sinCal}.`);
-  const l3 = desdeCuando(R, eq).replace('Desde cuándo trabaja (toda la UPM):', '<b>Desde cuándo trabaja (toda la UPM):</b>');
+
   const fr = R.F.map(f => `${esc(f.t.codigo || '?')}${f.inactivo ? ' inactivo' : ''} ${SIMB[f.est]}`).join(' · ');
   const l5 = `<b>Frentes:</b> ${fr}` + (eq.guardado ? '' : '. Equipos sin anotar: se usan valores por defecto.');
   const av = [...R.avisosHist];
@@ -1017,8 +1024,8 @@ function resumenMinero(upm, R, eq) {         // resultado del minero en pocas l�
   if (R.iniM && R.iniM >= R.corte) av.push(AV('no', '✗ Su propio inicio es después del corte', `Él mismo dice que empezó en ${fmes(R.iniM)}, después de agosto de 2023.`, '¿Trabajó en esta zona antes de agosto de 2023, aunque fuera en otro frente?', 'Si dice que no, anótelo así: su declaración no respalda la anterioridad.'));
   if (R.iniM && R.iniM >= R.fin) av.push(AV('no', '✗ Las fechas no cuadran', `Dice que empezó en ${fmes(R.iniM)}, pero según lo que usted marcó sus frentes ya estaban parados desde ${fmes(R.fin)}.`, '¿Cuándo empezó a trabajar aquí y cuándo dejó cada frente?', 'Corrija el inicio o las fechas de «Parado desde».'));
   // sin ajuste con imágenes, el techo de sus equipos acota lo que pudo abrir después del corte: el resto tendría que ser anterior
-  const lin = [l0, l2, l3, l5];   // la imagen y el techo de los equipos ya van en la conclusión
-  return { html: lin.join('<br>'), txt: `${upm}. ` + sinHtml(lin.map(l => l === l3 ? desdeCuando(R, eq, ' ') : l).join(' ')), avisos: av };
+  const lin = [l0, l2, l5];
+  return { html: l0 + l2 + '<br>' + l5, txt: `${upm}. ` + sinHtml(lin.join(' ').replace(/<div class="sub">|<\/div>/g, ' ')).replace(/\s+/g, ' '), avisos: av };
 }
 async function abrirCalc(trazo) {            // desde un frente, o desde «Guardado» para todos los frentes del minero filtrado
   if (!trazo && FILTRO === TODOS) { avisar('Elija primero un minero en la barra de abajo'); return; }
@@ -1158,8 +1165,8 @@ async function fichaAnt(t, el, pop) {        // en la ficha del frente: lo que d
   let g21 = null; try { g21 = await verde21(t.vertices); } catch (e) {}
   const av = [...noCuadraEquipos(f, R), ...alertasFrente(t, f.st, f.A, eq.cCorte, g21)].sort((a, b) => GRAVE[a.tipo] - GRAVE[b.tipo]);
   const cc = conclusion(R);
-  el.innerHTML = `<b>Este frente:</b> ${veredicto(f, g21)}<div class="lmin"><b>Conclusión de la UPM</b><br>· Anterioridad: ${cc.ant}<br>· Escala: ${cc.esc}<br>` +
-    desdeCuando(R, eq, '<br>&nbsp;&nbsp;', '· Desde cuándo trabaja:') + '</div>' + (av.length ? avisoCorto(av[0]) : '');
+  el.innerHTML = `<b>Este frente:</b> ${veredicto(f, g21)}<div class="lmin"><b>Conclusión de la UPM</b><br>· Anterioridad: ${cc.ant}<div class="sub">${desdeCuando(R, eq, '<br>', 'Desde cuándo trabaja:')}</div>` +
+    `· Escala: ${cc.esc}<div class="sub">${escalaLineas(R, false)}</div></div>` + (av.length ? avisoCorto(av[0]) : '');
   if (pop && pop.isOpen()) pop.update();
 }
 const noCuadraEquipos = (f, R) => f.est === 'no' && f.ini && f.ini < R.corte ? [AV('no', '✗ No cuadra con los equipos', 'Las imágenes muestran que este frente se abrió después de 2023, pero con las motobombas que dice no le alcanzaba el tiempo para abrirlo.', '¿Cuántas motobombas trabajaron este frente? ¿Qué tan hondo es el corte?', 'Corrija la historia de equipos o la profundidad con lo que diga.')] : [];
@@ -1390,9 +1397,12 @@ $('bBorrarPuntos').onclick = async () => { if (!confirm('¿Borrar TODOS tus punt
   for (const t of (await trazosTodos()).filter(t => esFrente(t) && !t.frente_n).sort((a, b) => a.fecha < b.fecha ? -1 : 1)) {
     const n = await numeroLibre(t.upm, t.id); await trazoGuardar({ ...t, frente_n: n, codigo: 'F' + n, codigo_area: t.codigo });
   }
-  EXTRA = (await metaGet('personasExtra')) || [];   // más los nombres ya usados en lo tomado, por si se borró el paquete
-  [...(await puntosTodos()), ...(await trazosTodos())].forEach(r => { if (r.upm && r.upm !== SIN && r.upm !== OTRO && !EXTRA.includes(r.upm)) EXTRA.push(r.upm); });
-  await cargarCapas(); await pintarMios(); await pintarTrazos(); aplicarVer(); actualizarMira(); iniciarGPS();
+  // nombres agregados en campo: solo quedan los que tienen algo tomado; los de prueba sin registros desaparecen al abrir
+  const usados = new Set([...(await puntosTodos()), ...(await trazosTodos())].map(r => r.upm).filter(u => u && u !== SIN && u !== OTRO));
+  EXTRA = [...usados]; await metaSet('personasExtra', EXTRA);
+  await cargarCapas();
+  const eqs = (await metaGet('equipos')) || {}, sobran = Object.keys(eqs).filter(u => !PERSONAS.includes(u) && !usados.has(u));
+  if (sobran.length) { sobran.forEach(u => delete eqs[u]); await metaSet('equipos', eqs); } await pintarMios(); await pintarTrazos(); aplicarVer(); actualizarMira(); iniciarGPS();
   if ('serviceWorker' in navigator) {        // al publicar una versión nueva, recarga una vez para estrenarla
     const habia = !!navigator.serviceWorker.controller; let recargada = false;
     navigator.serviceWorker.addEventListener('controllerchange', () => { if (habia && !recargada) { recargada = true; location.reload(); } });
