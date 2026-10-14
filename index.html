@@ -182,6 +182,7 @@
       <label>Estado del frente</label>
       <div class="seg opc" id="tEstado"><button data-v="Activo">Activo (aunque sea a ratos)</button><button data-v="Inactivo">Inactivo</button></div>
       <div id="tParadoFila" style="display:none"><label for="tParado">Parado desde (mes y año, si lo dice)</label><input id="tParado" type="month"></div>
+      <label for="tProf">Profundidad del frente (m) <small>(altura del talud + profundidad de la poza)</small></label><input id="tProf" inputmode="decimal" placeholder="obligatoria">
     </div>
     <div id="tNoFr" style="display:none"><label for="tTipo">Entonces, ¿qué tipo de área es?</label><select id="tTipo"></select></div>
     <div id="tAlerta"></div>
@@ -205,6 +206,7 @@
       <label>Estado del frente</label>
       <div class="seg opc" id="eEstado"><button data-v="Activo">Activo (aunque sea a ratos)</button><button data-v="Inactivo">Inactivo</button></div>
       <div id="eParadoFila" style="display:none"><label for="eParado">Parado desde (mes y año, si lo dice)</label><input id="eParado" type="month"></div>
+      <label for="eProf">Profundidad del frente (m) <small>(altura del talud + profundidad de la poza)</small></label><input id="eProf" inputmode="decimal" placeholder="obligatoria">
     </div>
     <div id="eNoFr" style="display:none"><label for="eTipo">Entonces, ¿qué tipo de área es?</label><select id="eTipo"></select></div>
     <div id="eAlerta"></div>
@@ -225,21 +227,21 @@
     <div class="grid2">
       <label>Área intervenida hoy (ha)<input id="cArea" readonly tabindex="-1"></label>
       <label>Ya intervenida en jul-2023, al menos (ha)<input id="cA1" readonly tabindex="-1"></label>
-      <label>Profundidad media del corte (m)<input id="cProf" inputmode="decimal"></label>
+      <label>Profundidad (m) <small>(altura del talud + profundidad de la poza)</small><input id="cProf" inputmode="decimal" placeholder="obligatoria"></label>
       <label>Nueva después de jul-2023 (ha)<input id="cNueva" readonly tabindex="-1"></label>
     </div>
     <div id="cResFrente"></div>
   </div>
   <h3 class="sec" id="cTitMin">Equipos del minero</h3>
   <p class="nota" style="margin-top:0" id="cEqNota">Valen para todos sus frentes, activos e inactivos.</p>
-  <div class="caja" style="margin-top:6px"><b>Motobombas a la vez</b> <span class="nota">sumando todos sus frentes. Cada fila: desde cuándo · cuántas · pulgadas · caudal por bomba (m³/h). La última sigue hasta hoy.</span>
+  <div class="caja" style="margin-top:6px"><b>Motobombas de chorro a la vez</b> <span class="nota">solo las del monitor: la de succión no se suma. Sumando todos sus frentes. Cada fila: desde cuándo · cuántas · pulgadas · caudal por bomba (m³/h). La última sigue hasta hoy.</span>
     <div id="cHist"></div><button id="bCHist" class="mini">＋ Agregar cambio de equipos</button></div>
   <div class="grid2">
     <label>m³ de agua por m³ de grava<input id="cRel" inputmode="decimal"></label>
     <label>Horas de bombeo al día<input id="cHoras" inputmode="decimal"></label>
     <label>Días por semana<input id="cDias" inputmode="decimal"></label>
     <label>Semanas paradas cada año por clima <small>lluvias, crecientes, verano sin agua</small><input id="cSemClima" inputmode="decimal"></label>
-    <label class="ancho">Producción que dice (m³/día)<input id="cManif" inputmode="decimal" placeholder="solo si da una cifra"></label>
+    <label class="ancho">Material que dice remover (m³/día) <small>todo lo removido: descapote, estéril y grava</small><input id="cManif" inputmode="decimal" placeholder="solo si da una cifra"></label>
   </div>
   <button class="gbtn" id="bGeq">Guardar equipos</button>
   <div class="caja" style="margin-top:10px"><b>Paradas puntuales</b> <span class="nota">las que él cuente: paro, operativo, daño, combustible…</span>
@@ -260,7 +262,7 @@
   <p class="nota">Las áreas no se editan: la de hoy sale del trazo y la de julio de 2023 la calcula Sentinel con el límite bajo del margen («al menos»). Para cambiarlas, corrija el trazo.<br>
   Motobombas: pregunte con cuántas empezó y cuándo cambió, sumando todos sus frentes. La primera fila corre desde el inicio que él diga; pregúntele el inicio al final, sin mostrarle la pantalla. No sume la de succión, que mueve la misma agua.<br>
   Paradas: solo las que él diga. Las de clima, en semanas de cada año; las puntuales, con su fecha, sus semanas y su causa. Si no dice, 0: suponer paradas haría ver más anterioridad de la que hay.<br>
-  Producción que dice: solo si da una cifra; si no, se deja vacío y se calcula con los equipos.</p>
+  Material que dice remover: todo lo que remueve (descapote, estéril y grava), no solo la grava que lava; si no da una cifra, se deja vacío. La escala se decide con lo observado en las imágenes; los equipos y lo que dice sirven para contrastar.</p>
 </div>
 
 <div class="panel" id="pLista"><h2>Lo guardado</h2>

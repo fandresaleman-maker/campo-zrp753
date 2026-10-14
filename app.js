@@ -5,6 +5,13 @@ const CTM12 = '+proj=tmerc +lat_0=4 +lon_0=-73 +k=0.9992 +x_0=5000000 +y_0=20000
 const aCTM = (lat, lon) => proj4('EPSG:4326', CTM12, [lon, lat]);           // -> [Este, Norte]
 const distCTM = (a, b) => { const p = aCTM(a.lat, a.lng), q = aCTM(b.lat, b.lng); return Math.hypot(q[0] - p[0], q[1] - p[1]); };   // metros en el plano CTM12
 const miles = v => Math.round(v).toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+function centroCTM(t) {                     // centro de un área en CTM12 (centroide del polígono): la coordenada del frente para el acta
+  const P = t.ctm && t.ctm.length ? t.ctm : t.vertices.map(([la, lo]) => aCTM(la, lo)), [x0, y0] = P[0];
+  let A = 0, cx = 0, cy = 0;
+  P.forEach(([xa, ya], i) => { const [xb, yb] = P[(i + 1) % P.length], a = xa - x0, b = ya - y0, c = xb - x0, d = yb - y0, f = a * d - c * b; A += f; cx += (a + c) * f; cy += (b + d) * f; });
+  if (Math.abs(A) < 1e-6) return [P.reduce((s, p) => s + p[0], 0) / P.length, P.reduce((s, p) => s + p[1], 0) / P.length].map(Math.round);
+  return [x0 + cx / (3 * A), y0 + cy / (3 * A)].map(Math.round);
+}
 const dec = (v, n) => v.toFixed(n).replace('.', ',');
 const $ = id => document.getElementById(id);
 
@@ -292,7 +299,7 @@ async function abrirLista() {
   ts.forEach(t => {
     const REG = t, REG_TIPO = 'trazos';
     const d = document.createElement('div'); d.className = 'item';
-    const med = t.tipo === 'area' ? `${areaTxt(t)} · perímetro ${distTxt(t.longitud_m)} · ${t.vertices.length} vértices` : `${distTxt(t.longitud_m)} · ${t.tramos_m.length} tramo(s)`;
+    const med = t.tipo === 'area' ? `${areaTxt(t)} · perímetro ${distTxt(t.longitud_m)} · ${t.vertices.length} vértices · centro E ${miles(centroCTM(t)[0])} N ${miles(centroCTM(t)[1])}` : `${distTxt(t.longitud_m)} · ${t.tramos_m.length} tramo(s)`;
     d.innerHTML = `<div class="t"><b>${esc(rotulo(t))}</b> · ${t.tipo === 'area' ? 'Área' : 'Línea'} · ${esc(queTxt(t))}${t.medicion ? ' · ' + esc(t.medicion) : ''}<br>${med} · ${esc(t.upm)}<br><span class="nota">${esc(t.local)}${t.nota ? ' · ' + esc(t.nota) : ''}</span></div>`;
     const v = document.createElement('button'); v.textContent = 'Ver';
     v.onclick = () => { abrir(null); seguir(false); const k = t.tipo === 'area' ? 'areas' : 'lineas'; if (!VER[k]) alternarVer(k);
@@ -346,7 +353,7 @@ function fichaPunto(p) {
     (p.precision != null ? ` · ±${Math.round(p.precision)} m` : '') + ` · ${esc(p.origen)}` + pie(p), () => abrirEditar('puntos', p, true));
 }
 function fichaTrazo(t, ll) {
-  const med = t.tipo === 'area' ? `${areaTxt(t)} · perímetro ${distTxt(t.longitud_m)} · ${t.vertices.length} vértices` : `${distTxt(t.longitud_m)} · ${t.tramos_m.length} tramo(s)`;
+  const med = t.tipo === 'area' ? `${areaTxt(t)} · perímetro ${distTxt(t.longitud_m)} · ${t.vertices.length} vértices<br>Centro: <b>E ${miles(centroCTM(t)[0])} · N ${miles(centroCTM(t)[1])}</b> (CTM12)` : `${distTxt(t.longitud_m)} · ${t.tramos_m.length} tramo(s)`;
   const fr = esFrente(t);
   const { d, pop } = ficha(ll, `<b>${esc(rotulo(t))}</b><br>${t.tipo === 'area' ? 'Área' : 'Línea'} · ${esc(queTxt(t))}${t.medicion ? ' · ' + esc(t.medicion) : ''}<br>${esc(t.upm)}<br>${med}` +
     `<br>Tramos: ${t.tramos_m.map(distTxt).join(' · ')}` + pie(t) +
@@ -441,6 +448,7 @@ function frPoner(x, t) {                     // llena el bloque «¿Es un frente
   segPoner(x + 'EsFr', fr == null ? '' : fr ? 'si' : 'no');
   segPoner(x + 'Estado', fr && t.estado ? t.estado : '');
   $(x + 'Parado').value = (t && t.parado_desde) || '';
+  $(x + 'Prof').value = t ? (profGuardada(t) || '') : '';
   const s = $(x + 'Tipo'), ops = [...NOFRENTE]; s.innerHTML = '';
   if (t && !fr && t.que && !ops.includes(t.que)) ops.splice(1, 0, t.que);   // tipos de registros viejos («Área», huella)
   ops.forEach(o => { const e = document.createElement('option'); e.textContent = o; s.appendChild(e); });
@@ -458,10 +466,11 @@ function frLeer(x) {                         // los campos del bloque, o el avis
   if (!es) return { falta: 'Indique si es un frente de explotación' };
   if (es === 'si') {
     const estado = $(x + 'Estado').dataset.v; if (!estado) return { falta: 'Indique si el frente está activo o inactivo' };
-    return { frente: true, que: FRENTE, estado, parado_desde: estado === 'Inactivo' ? ($(x + 'Parado').value || null) : null };
+    const prof = nv($(x + 'Prof').value); if (!(prof > 0)) return { falta: 'Anote la profundidad del frente (altura del talud + profundidad de la poza)' };
+    return { frente: true, que: FRENTE, estado, parado_desde: estado === 'Inactivo' ? ($(x + 'Parado').value || null) : null, prof };
   }
   const que = $(x + 'Tipo').value; if (que === NOFRENTE[0]) return { falta: 'Elija qué tipo de área es' };
-  return { frente: false, que, estado: null, parado_desde: null };
+  return { frente: false, que, estado: null, parado_desde: null, prof: null };
 }
 async function tituloT() {                   // el título dice si se guarda como frente (F de su minero) o como área (A)
   if (!CERRADA) return;
@@ -886,7 +895,7 @@ async function frentesDe(upm, incluir) {     // frentes del minero (activos e in
   ts.sort((a, b) => (a.frente_n || 99) - (b.frente_n || 99));
   const out = []; for (const t of ts) out.push({ t, st: await sentDe(t) }); return out;
 }
-const profGuardada = t => (t.ant && t.ant.prof) || PROF;
+const profGuardada = t => t.prof || (t.ant && t.ant.prof) || null;   // obligatoria por frente; sin ella no se calcula su volumen
 function analizar(frs, eq, profDe = profGuardada) {
   const fecha = (s, def) => { const d = new Date((s || def) + 'T00:00'); return isNaN(d) ? new Date(def + 'T00:00') : d; };
   const corte = fecha(eq.cCorte, CORTE), visita = fecha(eq.cVisita, hoyISO());
@@ -895,16 +904,16 @@ function analizar(frs, eq, profDe = profGuardada) {
   const Pe = periodos(eq), horas = nv(eq.cHoras), hoy = Pe[Pe.length - 1];   // la última fila sigue hasta hoy
   const capHoy = hoy.n * hoy.q * horas * 365.25 * fac;                         // m³/año con los equipos de hoy
   const F = frs.map(({ t, st }) => {
-    const A = t.area_m2, h = profDe(t), e = evalSent(st, A), V = A * h, Vn = (A - e.A23) * h;
+    const A = t.area_m2, h = profDe(t) || 0, e = evalSent(st, A), V = A * h, Vn = (A - e.A23) * h;
     const inactivo = t.estado === 'Inactivo', fin = inactivo && t.parado_desde ? mesISO(t.parado_desde) : visita;
     const ini = inicioCon(Pe, P, fac, horas, fin, V);   // a más tardar: todos los equipos solo en este frente
-    return { t, st, A, h, V, Vn, fin, ini, inactivo, ...e };
+    return { t, st, A, h, V, Vn, fin, ini, inactivo, sinProf: !(h > 0), ...e };
   });
   const S = k => F.reduce((a, f) => a + f[k], 0);
   const A = S('A'), A23 = S('A23'), V = S('V'), Vn = S('Vn'), nAct = F.filter(f => !f.inactivo).length;
   const fin = nAct || !F.length ? visita : new Date(Math.max(...F.map(f => +f.fin)));
   const ini = inicioCon(Pe, P, fac, horas, fin, V);   // todo el volumen de sus frentes con los equipos de cada época
-  const iniM = mesISO(eq.cInicio), hMed = A > 0 ? V / A : PROF;
+  const Aprof = F.filter(f => !f.sinProf).reduce((a, f) => a + f.A, 0), iniM = mesISO(eq.cInicio), hMed = Aprof > 0 ? V / Aprof : PROF;
   const capPost = fin > corte ? qDias(Pe, P, fac, corte, fin) * horas : 0;   // m³ que pudo mover después del corte, con los equipos que tuvo desde entonces
   const AmaxPost = Math.min(A, capPost / hMed);
   let hNec = null, diasTrab = 0;
@@ -916,7 +925,7 @@ function analizar(frs, eq, profDe = profGuardada) {
   histDe(eq).slice(1).forEach(r => { if (!r.desde) avisosHist.push(AV('falta', 'Falta un dato', 'Un cambio de equipos no tiene fecha, así que no se tuvo en cuenta.', '¿Desde cuándo tiene esas motobombas?', 'Anote el mes y el año en esa fila.'));
     else if (iniM && mesISO(r.desde) <= iniM) avisosHist.push(AV('no', '✗ Las fechas no cuadran', `Anotó un cambio de equipos en ${fmesISO(r.desde)}, antes del inicio que él dice (${fmes(iniM)}).`, '¿Cuándo empezó a trabajar y cuándo cambió de motobombas?', 'Corrija la fecha que esté mal.')); });
   return { F, A, A23, V, Vn, T, fac, sem, hoy, capHoy, corte, visita, fin, ini, iniM, hMed, capPost, AmaxPost, AeqPre: A - AmaxPost, hNec, diasTrab, avisosHist,
-    nAct, nIn: F.length - nAct, nSi: F.filter(f => f.est === 'si').length,
+    nAct, nIn: F.length - nAct, nSi: F.filter(f => f.est === 'si').length, sinProf: F.filter(f => f.sinProf).map(f => f.t.codigo || '?'),
     prodHoy: nAct || !F.length ? capHoy : 0, prodDice: nv(eq.cManif) * 365.25 * fac, prodObs: Vn / T };
 }
 function htmlMinero(upm, R, eq, corto) {     // resumen del minero: una línea (ficha) o completo (Guardado y calculadora)
@@ -930,16 +939,17 @@ function htmlMinero(upm, R, eq, corto) {     // resumen del minero: una línea (
   const sinEq = eq.guardado ? '' : ' <i>Equipos sin anotar: valores por defecto.</i>';
   const alerta = R.iniM && R.iniM < R.corte && !R.F.some(f => f.est === 'si') && R.F.some(f => f.est === 'no')
     ? avisoHtml(AV('no', '✗ No cuadra con lo que él dice', `Dice que empezó en ${fmes(R.iniM)}, pero todos los frentes que usted trazó se abrieron después de julio de 2023.`, '¿Dónde trabajaba antes de 2023? ¿Me muestra esos frentes?', 'Trace esos frentes viejos: sin ellos no hay prueba de anterioridad.')) : '';
-  if (corto) return `<b>Total de ${esc(upm)}</b> · ${fr} · ${ant} · ${ini}${dice}.${sinEq}${alerta}`;
-  const top = Math.max(R.prodHoy, R.prodDice, R.prodObs);
-  const escala = `<b>Escala:</b> hoy ${miles(R.prodHoy)} m³/año con ${dec(R.hoy.n, 1).replace(',0', '')} motobomba(s) de ${R.hoy.pulg}"` + (R.nAct ? '' : ' (no tiene frentes activos dibujados)') +
-    (R.prodDice > 0 ? ` · lo que dice ${miles(R.prodDice)}` : '') + ` · observado desde el corte ${miles(R.prodObs)} (mínimo, con todos sus frentes) → ` +
-    (top > UMBRAL ? '<b class="no">supera 165.000 m³/año</b>' : '<b class="si">bajo 165.000 m³/año</b>');
+  if (corto) return `<b>Total de ${esc(upm)}</b> · ${fr} · ${ant} · ${ini}${dice}.${sinEq}` + (R.sinProf.length ? ` <i>Falta la profundidad de ${R.sinProf.join(', ')}.</i>` : '') + alerta;
+  const escala = `<b>Escala:</b> lo observado desde el corte da <b>${miles(R.prodObs)} m³/año</b> (área abierta desde jul-2023 × profundidad ÷ años) → ` +
+    (R.prodObs > UMBRAL ? '<b class="no">supera 165.000 m³/año</b>' : '<b class="si">bajo 165.000 m³/año</b>') +
+    `. Para contrastar: con sus equipos de hoy, ${miles(R.prodHoy)} m³/año` + (R.nAct ? '' : ' (no tiene frentes activos dibujados)') + (R.prodDice > 0 ? `; lo que dice remover, ${miles(R.prodDice)} m³/año` : '');
+  const avEscala = R.prodObs > UMBRAL ? avisoHtml(AV('no', '✗ Supera la pequeña minería', `Lo observado en las imágenes da ${miles(R.prodObs)} m³/año, más de 165.000.`, '¿Toda esta área es suya? ¿Desde cuándo trabaja estos frentes?', 'Revise que el trazo no incluya áreas de terceros o viejas y que la profundidad esté bien medida; si se confirma, la figura no aplica.'))
+    : R.prodHoy > UMBRAL || R.prodDice > UMBRAL ? avisoHtml(AV('duda', '? La escala no cuadra', `Lo observado está bajo 165.000 m³/año, pero ${R.prodHoy > UMBRAL ? 'lo que mueven sus equipos de hoy' : 'lo que dice remover'} lo supera.`, '¿Cuánto material remueve al año en total? ¿Trabajan todos los equipos a la vez?', 'Revise con él los equipos y la cifra; la escala se decide con lo observado.')) : '';
+  const avProf = R.sinProf.length ? avisoHtml(AV('falta', 'Falta un dato', `Falta la profundidad de ${R.sinProf.join(', ')}: sin ella no se calcula su volumen ni entra en la escala.`, '¿Qué altura tiene el talud y qué profundidad la poza?', 'Anótela con «Editar frente».')) : '';
   const lista = R.F.map(f => `${esc(f.t.codigo || '')}${f.inactivo ? ' (inactivo)' : ''} ${SIMB[f.est]} ${f.est === 'nc' ? 'no concluyente' : Math.round(f.A23 / f.A * 100) + ' %'}`).join(' · ');
-  const sinProf = R.F.filter(f => !(f.t.ant && f.t.ant.prof) && !(CALC && CALC.trazo && CALC.trazo.id === f.t.id)).length;
   return `<b>Total de ${esc(upm)}</b> · ${fr} · ${ha(R.A)} ha<br><b>Anterioridad:</b> ${ant}; ${R.nSi} de ${nF} frente${nF > 1 ? 's' : ''} con ✓.<br>` +
     `${ini.charAt(0).toUpperCase() + ini.slice(1)}${dice}.<br>${escala}.<br><span class="nota">Frentes: ${lista}` +
-    (sinProf ? `<br>${sinProf} frente(s) sin guardar usan ${PROF} m de profundidad.` : '') + (paradasTxt(eq.paradas) ? `<br>Paradas puntuales: ${esc(paradasTxt(eq.paradas))}.` : '') + `</span>${sinEq}${alerta}`;
+    (paradasTxt(eq.paradas) ? `<br>Paradas puntuales: ${esc(paradasTxt(eq.paradas))}.` : '') + `</span>${sinEq}${avProf}${avEscala}${alerta}`;
 }
 async function abrirCalc(trazo) {            // desde un frente, o desde «Guardado» para todos los frentes del minero filtrado
   if (!trazo && FILTRO === TODOS) { avisar('Elija primero un minero en la barra de abajo'); return; }
@@ -951,7 +961,7 @@ async function abrirCalc(trazo) {            // desde un frente, o desde «Guard
   $('cSent').style.display = 'none'; $('cResFrente').innerHTML = ''; $('cInicioCalc').value = '…';
   $('cRes').innerHTML = '<p class="nota">Calculando con Sentinel…</p>';
   if (trazo) {
-    $('cArea').value = dec(trazo.area_m2 / 10000, 2); $('cProf').value = profGuardada(trazo); $('cA1').value = '…'; $('cNueva').value = '…';
+    $('cArea').value = dec(trazo.area_m2 / 10000, 2); $('cProf').value = profGuardada(trazo) || ''; $('cA1').value = '…'; $('cNueva').value = '…';
     $('cOrigen').innerHTML = `${esc(rotulo(trazo))} · ${esc(upm)} · ${esc(queTxt(trazo).toLowerCase())}${trazo.medicion ? ' · ' + esc(trazo.medicion) : ''}`;
   } else $('cOrigen').innerHTML = `${esc(upm)}: todos sus frentes, activos e inactivos.`;
   abrir('pCalc');
@@ -1012,7 +1022,7 @@ function calcular() {
     const f = R.F.find(x => x.t.id === tr.id);
     $('cA1').value = f.est === 'nc' ? 'no concluyente' : ha(f.A23); $('cNueva').value = ha(f.A - f.A23);
     $('cSent').innerHTML = cajaSentinel(f.st, f.A); $('cSent').style.display = '';
-    let h = `<div class="caja calc">${textoEst(f)}<br>Volumen del frente: ${miles(f.V)} m³ (${ha(f.A)} ha × ${dec(f.h, 1)} m).<br>`;
+    let h = `<div class="caja calc">${textoEst(f)}<br>` + (f.sinProf ? '<b class="no">Falta la profundidad del frente (altura del talud + profundidad de la poza):</b> sin ella no se calcula su volumen.<br>' : `Volumen del frente: ${miles(f.V)} m³ (${ha(f.A)} ha × ${dec(f.h, 1)} m).<br>`);
     h += f.ini ? `Inicio de este frente: <b>a más tardar ${fmes(f.ini)}</b> ${f.ini < R.corte ? '<b class="si">antes del corte</b>' : '<b class="no">después del corte</b>'}, si todos sus equipos hubieran trabajado solo aquí${f.inactivo && f.t.parado_desde ? ' hasta ' + fmesISO(f.t.parado_desde) : ''}.` : 'Inicio de este frente: faltan los equipos.';
     const noEq = f.est === 'no' && f.ini && f.ini < R.corte ? [AV('no', '✗ No cuadra con los equipos', 'Las imágenes muestran que este frente se abrió después de 2023, pero con las motobombas que dice no le alcanzaba el tiempo para abrirlo.', '¿Cuántas motobombas trabajaron este frente? ¿Qué tan hondo es el corte?', 'Corrija la historia de equipos o la profundidad con lo que diga.')] : [];
     if (f.est === 'si' && f.ini && f.ini >= R.corte) h += '<br>El cálculo con equipos solo da una fecha límite; la imagen de jul-2023 es evidencia directa y es la que vale.';
@@ -1042,7 +1052,7 @@ function calcular() {
   $('cRes').innerHTML = h;
   lineas.push(sinHtml(htmlMinero(upm, R, eq, false)).replace(/ · Frentes:/, '. Frentes:'));
   lineas.push(`Equipos (manifestados): motobombas a la vez ${histTxt(eq)} (${dec(nv(eq.cRel) || 15, 0)} m³ de agua por m³ de grava), ${dec(nv(eq.cHoras), 1)} h/día, ${dec(nv(eq.cDias), 1)} días/semana; paradas: ${dec(nv(eq.cSemClima), 1)} semanas cada año por clima` + (paradasTxt(eq.paradas) ? `; puntuales: ${paradasTxt(eq.paradas)}.` : '.') +
-    (nv(eq.cManif) > 0 ? ` Producción que dice: ${miles(nv(eq.cManif))} m³/día.` : ''));
+    (nv(eq.cManif) > 0 ? ` Material que dice remover: ${miles(nv(eq.cManif))} m³/día.` : ''));
   if (R.F.length && R.capHoy > 0) lineas.push(`Inicio calculado ${R.ini ? fmes(R.ini) : 'sin estimar'} (volumen de todos sus frentes, ${miles(R.V)} m³, con los equipos de cada época). Área nueva desde jul-2023: ${ha(R.A - R.A23)} ha (${miles(R.Vn)} m³) frente a ${miles(R.capPost)} m³ que alcanzaban sus equipos: ` +
     (R.Vn > R.capPost * 1.2 ? 'abrió más de lo que sus equipos explican.' : 'coherente.'));
   if (R.hNec != null) lineas.push(`Con el inicio que dice (${fmes(R.iniM)}) habría tenido que bombear ${dec(R.hNec, 1)} h al día en ${miles(R.diasTrab)} días de trabajo.`);
@@ -1050,13 +1060,14 @@ function calcular() {
 }
 async function calcGuardar() {               // guarda los equipos del minero y, si viene de un frente, su profundidad y resultado
   if (!CALC || !CALC.R) return;
+  if (CALC.trazo && !(num('cProf') > 0)) { avisar('Anote la profundidad del frente (altura del talud + profundidad de la poza)'); $('cProf').focus(); return; }
   const eq = eqForm(), tr = CALC.trazo, g = await equiposGuardar(CALC.upm, eq); CALC.eq.partes = fechasDe(g); CALC.eq.guardado = true;
   ['eq', 'par', 'ini'].forEach(k => bloquearParte(k, true)); notaEquipos();
   await metaSet('calcUltimo', { cCorte: eq.cCorte });
   let msg = `Equipos de ${CALC.upm} guardados`;
   if (tr) {
     const f = CALC.R.F.find(x => x.t.id === tr.id), fecha = fechaLocal(new Date()), st = f.st || {};
-    const nuevo = { ...((await trazoGet(tr.id)) || tr), ant: { prof: f.h, fecha, sentinel: f.est, area_ha: +(f.A / 10000).toFixed(2), al_menos_ha: +(f.A23 / 10000).toFixed(2),
+    const nuevo = { ...((await trazoGet(tr.id)) || tr), prof: f.h, ant: { prof: f.h, fecha, sentinel: f.est, area_ha: +(f.A / 10000).toFixed(2), al_menos_ha: +(f.A23 / 10000).toFixed(2),
       pct: f.A > 0 ? Math.round(f.A23 / f.A * 100) : 0, R: st.R ?? null, Rmin: st.Rmin ?? null, Rmax: st.Rmax ?? null, inicio: f.ini ? isoMes(f.ini) : null }, calc: { resumen: RESUMEN, fecha } };
     await trazoGuardar(nuevo); CALC.trazo = nuevo; CALC.frs = CALC.frs.map(x => x.t.id === nuevo.id ? { ...x, t: nuevo } : x);
     msg = `Guardado en ${rotulo(nuevo)} y equipos de ${CALC.upm}`;
@@ -1086,6 +1097,7 @@ function alertasFrente(fr, st, A, corteISO, g21) { // lo marcado que contradice 
   const out = []; if (!fr || !(fr.frente || esFrente(fr))) return out;
   const corte = new Date((corteISO || CORTE) + 'T00:00'), ok = st && !st.error && !st.fuera && !st.sinAnillo;
   const p21 = g21 && !g21.sin ? Math.round(g21.pct * 100) : null;
+  if (!(fr.prof || (fr.ant && fr.ant.prof))) out.push(AV('falta', 'Falta un dato', 'No tiene anotada la profundidad del frente, y sin ella no se calcula su volumen.', '¿Qué altura tiene el talud y qué profundidad la poza?', 'Anótela con «Editar frente».'));
   if (fr.estado === 'Inactivo') {
     if (!fr.parado_desde) out.push(AV('falta', 'Falta un dato', 'No anotó desde cuándo está parado este frente, y sin eso no se puede comparar con las imágenes.', '¿Desde cuándo no trabaja este frente?', 'Anótelo en «Parado desde» con «Editar frente».'));
     else {
@@ -1150,20 +1162,20 @@ async function datosExport() {
   const AN = {};                              // análisis de cada minero con frentes, con lo guardado en el teléfono
   for (const u of [...new Set(ts.filter(esFrente).map(t => t.upm))]) { const eq = await equiposDe(u); AN[u] = { eq, R: analizar(await frentesDe(u), eq) }; }
   const fi = t => esFrente(t) && AN[t.upm] ? AN[t.upm].R.F.find(f => f.t.id === t.id) : null;
-  const cabT = ['n', 'consecutivo', 'nombre', 'tipo', 'que_es', 'upm', 'nota', 'fecha_hora', 'longitud_o_perimetro_m', 'area_ha', 'area_m2', 'vertices', 'tramos_m', 'vertices_ctm12_este_norte', 'como_se_midio',
+  const cabT = ['n', 'consecutivo', 'nombre', 'tipo', 'que_es', 'upm', 'nota', 'fecha_hora', 'longitud_o_perimetro_m', 'area_ha', 'area_m2', 'vertices', 'tramos_m', 'vertices_ctm12_este_norte', 'centro_ctm12_este', 'centro_ctm12_norte', 'como_se_midio',
     'area_trazada_ha', 'arboles_quitados_ha', 'es_frente', 'estado_frente', 'parado_desde', 'google_2021_intervenido_pct', 'profundidad_m', 'sentinel_anterior_al_corte', 'intervenida_jul2023_al_menos_ha', 'intervenida_jul2023_pct', 'inicio_frente_a_mas_tardar', 'alertas', 'alertas_al_guardar', 'anterioridad_guardada', 'calculo_anterioridad'];
   const G21 = {}; for (const t of ts.filter(esFrente)) { try { G21[t.id] = await verde21(t.vertices); } catch (e) {} }
   const filasT = ts.map((t, i) => { const f = fi(t), g = G21[t.id]; return [i + 1, t.codigo || '', q(t.nombre), t.tipo === 'area' ? 'área' : 'línea', q(t.que), q(t.upm), q(t.nota), t.local, c(t.longitud_m),
-    t.area_m2 != null ? c((t.area_m2 / 10000).toFixed(2)) : '', t.area_m2 ?? '', t.vertices.length, q(t.tramos_m.map(c).join(' | ')), q(t.ctm.map(([e, n]) => `${e} ${n}`).join(' | ')), q(t.medicion || ''),
+    t.area_m2 != null ? c((t.area_m2 / 10000).toFixed(2)) : '', t.area_m2 ?? '', t.vertices.length, q(t.tramos_m.map(c).join(' | ')), q(t.ctm.map(([e, n]) => `${e} ${n}`).join(' | ')), t.tipo === 'area' ? centroCTM(t)[0] : '', t.tipo === 'area' ? centroCTM(t)[1] : '', q(t.medicion || ''),
     t.area_trazada_m2 ? c((t.area_trazada_m2 / 10000).toFixed(2)) : '', t.veg_m2 ? c((t.veg_m2 / 10000).toFixed(2)) : '',
     t.tipo === 'area' ? (esFrente(t) ? 'sí' : 'no') : '', q(t.estado || ''), t.parado_desde || '', g && !g.sin ? Math.round(g.pct * 100) : (esFrente(t) ? 'sin imagen' : ''), f ? c(f.h) : '', f ? EST_T[f.est] : '', f ? c((f.A23 / 10000).toFixed(2)) : '', f && f.A ? Math.round(f.A23 / f.A * 100) : '',
     f && f.ini ? isoMes(f.ini) : '', q(f ? alertasFrente(t, f.st, f.A, AN[t.upm].eq.cCorte, G21[t.id]).map(avisoTxt).join(' | ') : ''), q((t.alertas_al_guardar || []).join(' | ')), t.ant ? q(t.ant.fecha) : '', q(t.calc ? t.calc.resumen.replace(/\n/g, ' ') : '')].join(';'); });
   const csvT = '﻿' + cabT.join(';') + '\n' + filasT.join('\n') + '\n';
   const cabM = ['minero', 'frentes', 'activos', 'inactivos', 'area_frentes_ha', 'intervenida_jul2023_al_menos_ha', 'intervenida_jul2023_pct', 'frentes_con_anterioridad', 'inicio_calculado', 'inicio_manifestado',
-    'produccion_hoy_m3_ano', 'produccion_que_dice_m3_ano', 'produccion_observada_desde_corte_m3_ano', 'supera_165000', 'historia_equipos', 'motobombas_hoy', 'pulgadas_hoy', 'agua_por_grava',
+    'produccion_hoy_m3_ano', 'material_que_dice_remover_m3_ano', 'produccion_observada_desde_corte_m3_ano', 'supera_165000_segun_lo_observado', 'historia_equipos', 'motobombas_hoy', 'pulgadas_hoy', 'agua_por_grava',
     'horas_dia', 'dias_semana', 'semanas_paradas_clima_al_ano', 'paradas_puntuales', 'produccion_que_dice_m3_dia', 'fecha_corte', 'fecha_visita', 'equipos_anotados'];
   const filasM = Object.entries(AN).map(([u, { eq, R }]) => [q(u), R.F.length, R.nAct, R.nIn, c((R.A / 10000).toFixed(2)), c((R.A23 / 10000).toFixed(2)), R.A ? Math.round(R.A23 / R.A * 100) : '', R.nSi,
-    R.ini ? isoMes(R.ini) : '', eq.cInicio || '', Math.round(R.prodHoy), Math.round(R.prodDice), Math.round(R.prodObs), Math.max(R.prodHoy, R.prodDice, R.prodObs) > UMBRAL ? 'sí' : 'no',
+    R.ini ? isoMes(R.ini) : '', eq.cInicio || '', Math.round(R.prodHoy), Math.round(R.prodDice), Math.round(R.prodObs), R.prodObs > UMBRAL ? 'sí' : 'no',
     q(histTxt(eq)), c(R.hoy.n), R.hoy.pulg, c(nv(eq.cRel)), c(nv(eq.cHoras)), c(nv(eq.cDias)), c(nv(eq.cSemClima)), q(paradasTxt(eq.paradas)), c(nv(eq.cManif)), eq.cCorte, eq.cVisita, eq.guardado ? 'sí' : 'no (valores por defecto)'].join(';'));
   const csvM = filasM.length ? '﻿' + cabM.join(';') + '\n' + filasM.join('\n') + '\n' : '';
   const kc = vs => vs.map(([la, lo]) => `${lo},${la},0`).join(' ');
@@ -1181,7 +1193,7 @@ async function datosExport() {
     ...pts.map(p => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [p.lon, p.lat] }, properties: { ...p } })),
     ...ts.map(t => ({ type: 'Feature', geometry: t.tipo === 'area' ? { type: 'Polygon', coordinates: [lonlat([...t.vertices, t.vertices[0]])] } : { type: 'LineString', coordinates: lonlat(t.vertices) },
       properties: { id: t.id, tipo: t.tipo, consecutivo: t.codigo || null, nombre: t.nombre, que_es: t.que, upm: t.upm, nota: t.nota, fecha: t.fecha, local: t.local, longitud_o_perimetro_m: t.longitud_m,
-        area_m2: t.area_m2, area_ha: t.area_m2 != null ? +(t.area_m2 / 10000).toFixed(2) : null, tramos_m: t.tramos_m, vertices_ctm12: t.ctm, como_se_midio: t.medicion || null,
+        area_m2: t.area_m2, area_ha: t.area_m2 != null ? +(t.area_m2 / 10000).toFixed(2) : null, tramos_m: t.tramos_m, vertices_ctm12: t.ctm, centro_ctm12: t.tipo === 'area' ? centroCTM(t) : null, como_se_midio: t.medicion || null,
         area_trazada_m2: t.area_trazada_m2 || null, arboles_quitados_m2: t.veg_m2 || null,
         es_frente: t.tipo === 'area' ? esFrente(t) : null, estado_frente: t.estado || null, parado_desde: t.parado_desde || null,
         google_2021_intervenido_pct: G21[t.id] && !G21[t.id].sin ? Math.round(G21[t.id].pct * 100) : null, alertas_al_guardar: t.alertas_al_guardar || null,
