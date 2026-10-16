@@ -324,7 +324,22 @@ async function abrirLista() {
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 /* ---------------- medir, líneas y áreas ---------------- */
-let MIDIENDO = false, CERRADA = false, VERT = [], guiaMed = null;
+let MIDIENDO = false, CERRADA = false, VERT = [], guiaMed = null, REJILLA = false, CELDAS_AUTO = false;
+const ajustar = ll => L.latLng(Math.round(ll.lat * 1000) / 1000, Math.round(ll.lng * 1000) / 1000);   // al vértice más cercano de la cuadrícula (celdas de 0,001°)
+function celdasDe(vs) {                      // celdas de la cuadrícula cuyo centro queda dentro del polígono
+  const ring = vs.map(v => [v.lng ?? v[1], v.lat ?? v[0]]), xs = ring.map(p => p[0]), ys = ring.map(p => p[1]); let n = 0;
+  for (let lo = Math.floor(Math.min(...xs) * 1000) / 1000; lo < Math.max(...xs) - 1e-9; lo = Math.round((lo + .001) * 1000) / 1000)
+    for (let la = Math.floor(Math.min(...ys) * 1000) / 1000; la < Math.max(...ys) - 1e-9; la = Math.round((la + .001) * 1000) / 1000)
+      if (dentro(lo + .0005, la + .0005, ring)) n++;
+  return n;
+}
+const diagonales = vs => vs.filter((v, i) => { const w = vs[(i + 1) % vs.length]; return Math.abs(v.lat - w.lat) > 1e-9 && Math.abs(v.lng - w.lng) > 1e-9; }).length;   // lados que cortan celdas
+function alternarRejilla() {                 // encendido: cada punto se pega al vértice de celda más cercano; apagado: se mide libre
+  REJILLA = !REJILLA; const b = $('bMedRejilla'); b.classList.toggle('on', REJILLA); b.textContent = REJILLA ? 'Ajustando a la cuadrícula (tocar para soltar)' : 'Ajustar a la cuadrícula';
+  if (REJILLA) { CERRADA = true; marcarArea(); VERT = VERT.map(ajustar).filter((v, i, a) => !i || !v.equals(a[i - 1])); if (!capaCeldas) { alternarCeldas(); CELDAS_AUTO = true; } }
+  else if (CELDAS_AUTO) { if (capaCeldas) alternarCeldas(); CELDAS_AUTO = false; }
+  VEG = null; pintarMed();
+}
 const haTxt = m2 => `${dec(m2 / 10000, 2)} ha`;
 const centro = vs => L.latLng(vs.reduce((a, v) => a + v.lat, 0) / vs.length, vs.reduce((a, v) => a + v.lng, 0) / vs.length);
 const mitad = (a, b) => L.latLng((a.lat + b.lat) / 2, (a.lng + b.lng) / 2);
@@ -356,15 +371,25 @@ function fichaTrazo(t, ll) {                 // corta: quién, qué, cuánto, d�
   const fr = esFrente(t), area = t.tipo === 'area', pr = profGuardada(t), novis = t.medicion === MEDICION[1] ? ' · no visitado' : '';
   let h = `<b>${esc(t.codigo || t.nombre || '')}</b> · ${esc(t.upm)}<br>`;
   if (fr) h += `${esc(queTxt(t))} · ${haTxt(t.area_m2)} · ` + (pr ? `${dec(pr, 1)} m de profundidad` : '<span class="no">sin profundidad</span>') + novis;
+  else if (esARF(t)) h += `${esc(t.que)} · ${t.celdas ?? celdasDe(t.vertices)} celdas · ${dec(t.area_m2 / 10000, 4)} ha` + (t.area_m2 > 1e6 ? ' <span class="no">(pasa de 100 ha)</span>' : '');
   else h += area ? `${esc(t.que || 'Área')} · ${haTxt(t.area_m2)}${novis}` : `${esc(t.que || 'Línea')} · ${distTxt(t.longitud_m)}`;
   if (t.nombre && t.codigo) h += `<br>${esc(t.nombre)}`;
   if (area) { const [E, N] = centroCTM(t); h += `<br>Centro: E ${miles(E)} · N ${miles(N)}`; }
   if (t.nota) h += `<br>Nota: ${esc(t.nota)}`;
-  const { d, pop } = ficha(ll, h + (fr ? '<div class="lmin" data-ant>Mirando las imágenes…</div>' : area ? '<div class="lmin">No es frente: no lleva anterioridad. Si lo es, márquelo con «Editar».</div>' : ''),
+  const { d, pop } = ficha(ll, h + (fr ? '<div class="lmin" data-ant>Mirando las imágenes…</div>' : esARF(t) ? '<div class="lmin" data-arf>Revisando sus frentes…</div>' : area ? '<div class="lmin">No es frente: no lleva anterioridad. Si lo es, márquelo con «Editar».</div>' : ''),
     null, [[fr ? 'Editar frente' : 'Editar', () => abrirEditar('trazos', t, true)],
       ...(fr ? [['Anterioridad', () => abrirCalc(t)]] : []),
-      ...(t.tipo === 'area' && !t.veg_m2 ? [['Quitar árboles del área', () => proponerVeg(t.vertices, t.area_m2, r => aceptarVegTrazo(t, r))]] : [])]);
+      ...(t.tipo === 'area' && !t.veg_m2 && !esARF(t) ? [['Quitar árboles del área', () => proponerVeg(t.vertices, t.area_m2, r => aceptarVegTrazo(t, r))]] : [])]);
   if (fr) fichaAnt(t, d.querySelector('[data-ant]'), pop).catch(() => { d.querySelector('[data-ant]').textContent = 'No se pudo calcular la anterioridad.'; });
+  if (esARF(t)) cubreFrentes(t, d.querySelector('[data-arf]'), pop).catch(() => { d.querySelector('[data-arf]').textContent = ''; });
+}
+async function cubreFrentes(t, el, pop) {   // qué frentes del minero quedan dentro de la figura y cuáles fuera
+  const ring = t.vertices.map(([la, lo]) => [lo, la]), frs = (await trazosTodos()).filter(x => esFrente(x) && x.upm === t.upm);
+  if (!frs.length) { el.textContent = 'El minero no tiene frentes dibujados.'; return; }
+  const den = [], fue = [];
+  frs.forEach(x => { const c = centro(x.vertices.map(([a, b]) => L.latLng(a, b))); (dentro(c.lng, c.lat, ring) ? den : fue).push(x.codigo || '?'); });
+  el.innerHTML = (den.length ? `Frentes dentro: ${den.join(', ')}.` : '') + (fue.length ? ` <span class="no">Quedan fuera: ${fue.join(', ')}.</span>` : ' Cubre todos sus frentes.');
+  if (pop && pop.isOpen()) pop.update();
 }
 async function aceptarVegTrazo(t, r) {       // guarda el área sin la vegetación aceptada
   const base = (await trazoGet(t.id)) || t, A0 = base.area_trazada_m2 || base.area_m2, veg = Math.round(A0 * r.frac);
@@ -388,21 +413,29 @@ function medidas(vs, cerrada) {              // tramos, total y área, planos en
   return { tramos, total: tramos.reduce((a, b) => a + b, 0), area };
 }
 function medirAbrir() {
-  MIDIENDO = true; CERRADA = false; VERT = []; VEG = null; abrir(null);
+  MIDIENDO = true; CERRADA = false; VERT = []; VEG = null; REJILLA = true; alternarRejilla(); abrir(null);
   $('pMedir').classList.add('abierto'); $('mira').style.display = 'none'; marcarArea(); pintarMed();
 }
 function medirFin(preguntar) {
   if (preguntar && VERT.length > 1 && !confirm('¿Salir sin guardar esta medición?')) return;
+  if (REJILLA) alternarRejilla();
   MIDIENDO = false; VERT = []; VEG = null; capaMed.clearLayers(); capaVeg.clearLayers(); $('pVeg').classList.remove('abierto'); if (guiaMed) { map.removeLayer(guiaMed); guiaMed = null; }
   $('pMedir').classList.remove('abierto'); $('mira').style.display = ''; actualizarMira();
 }
 function marcarArea() { const b = $('bMedArea'); b.classList.toggle('on', CERRADA); b.textContent = CERRADA ? 'Dejar como línea' : 'Cerrar área'; }
-function medirAgregar(ll) { VERT.push(L.latLng(ll)); VEG = null; pintarMed(); }
+function medirAgregar(ll) {
+  let p = L.latLng(ll);
+  if (REJILLA) { p = ajustar(p); const u = VERT[VERT.length - 1]; if (u && u.equals(p)) { avisar('Ese vértice ya está puesto'); return; } }
+  VERT.push(p); VEG = null; pintarMed();
+}
 function pintarMed() {
   capaMed.clearLayers();
   const area = CERRADA && VERT.length > 2, m = medidas(VERT, area);
-  $('filaVeg').style.display = area ? 'flex' : 'none';
-  if (area) {
+  $('filaVeg').style.display = area && !REJILLA ? 'flex' : 'none';
+  if (area && REJILLA) {
+    L.polygon(VERT, { color: '#F9B21A', weight: 3, dashArray: '10 6', fillColor: '#F9B21A', fillOpacity: .25, interactive: false }).addTo(capaMed);
+    etiqueta(centro(VERT), `ARF · ${celdasDe(VERT)} celdas · ${dec(m.area / 10000, 4)} ha`, 'grande').addTo(capaMed);
+  } else if (area) {
     L.polygon(VERT, { color: '#F9B21A', weight: 3, fillColor: '#F9B21A', fillOpacity: .15, interactive: false }).addTo(capaMed);
     if (VEG) L.imageOverlay(VEG.url, VEG.bounds, { interactive: false }).addTo(capaMed);
     etiqueta(centro(VERT), VEG ? haTxt(m.area * (1 - VEG.frac)) : haTxt(m.area), 'grande').addTo(capaMed);
@@ -418,7 +451,10 @@ function textoMed() {                       // totales, último tramo y línea g
   if (!MIDIENDO) return;
   const c = map.getCenter(), area = CERRADA && VERT.length > 2, m = medidas(VERT, area);
   let h;
-  if (area) h = (VEG ? `<b>${haTxt(m.area * (1 - VEG.frac))}</b> sin árboles (${haTxt(m.area)} trazadas)` : `<b>${haTxt(m.area)}</b>`) + ` · perímetro ${distTxt(m.total)} · ${VERT.length} vértices`;
+  if (area && REJILLA) { const dg = diagonales(VERT);
+    h = `<b>Figura ARF: ${celdasDe(VERT)} celdas · ${dec(m.area / 10000, 4)} ha</b> · ${VERT.length} vértices` + (dg ? `<br><span class="no">${dg} lado${dg > 1 ? 's' : ''} en diagonal: ponga también la esquina para seguir las líneas de las celdas.</span>` : '') + (m.area > 1e6 ? '<br><span class="no">Pasa de 100 ha.</span>' : ''); }
+  else if (REJILLA) h = `<b>Figura ARF:</b> cada punto se pega al vértice de celda más cercano · ${VERT.length} vértice${VERT.length === 1 ? '' : 's'}`;
+  else if (area) h = (VEG ? `<b>${haTxt(m.area * (1 - VEG.frac))}</b> sin árboles (${haTxt(m.area)} trazadas)` : `<b>${haTxt(m.area)}</b>`) + ` · perímetro ${distTxt(m.total)} · ${VERT.length} vértices`;
   else {
     h = `<b>${distTxt(m.total)}</b> en total · ${m.tramos.length} tramo(s)`;
     if (CERRADA) h += '<br>Para cerrar un área hacen falta al menos 3 puntos.';
@@ -436,9 +472,11 @@ function textoMed() {                       // totales, último tramo y línea g
 }
 const MEDICION = ['En campo (recorrida)', 'Sobre la imagen (no visitada)'], HUELLA = 'Huella en imagen anterior al corte';   // la huella ya no se ofrece; queda para registros de antes
 const FRENTE = 'Frente de explotación';
-const NOFRENTE = ['— Elija —', 'Área intervenida o removida (no es frente)', 'Entable o planta de beneficio', 'Piscina o sedimentador', 'Botadero o estéril', 'Campamento', 'Vía o acceso', 'Otro'];
+const ARF = ['Figura ARF · explotación anticipada', 'Figura ARF · exploración'];   // propuesta de área sobre la cuadrícula
+const NOFRENTE = ['— Elija —', ...ARF, 'Área intervenida o removida (no es frente)', 'Entable o planta de beneficio', 'Piscina o sedimentador', 'Botadero o estéril', 'Campamento', 'Vía o acceso', 'Otro'];
 const QUE = { linea: ['Distancia entre puntos', 'Recorrido o acceso', 'Canal o drenaje', 'Frente lineal', 'Otro'] };   // el primero es el predeterminado
 const esFrente = t => t.tipo === 'area' && (t.frente != null ? t.frente : t.que === FRENTE);
+const esARF = t => t.tipo === 'area' && ARF.includes(t.que);
 const queTxt = t => esFrente(t) ? `Frente ${t.estado ? t.estado.toLowerCase() : '(estado sin dato)'}` + (t.estado === 'Inactivo' && t.parado_desde ? `, parado desde ${fmesISO(t.parado_desde)}` : '') : (t.que || '');
 const areaTxt = t => t.veg_m2 ? `${haTxt(t.area_m2)} (${haTxt(t.area_trazada_m2)} trazadas − ${haTxt(t.veg_m2)} de árboles)` : haTxt(t.area_m2);
 async function numeroLibre(upm, sinId) {     // frentes por minero: F1, F2…; el número de un frente borrado se vuelve a usar
@@ -491,7 +529,10 @@ async function medirGuardar() {              // pregunta qué es antes de guarda
   $('tCorto').value = ''; $('tNota').value = ''; if (FILTRO !== TODOS) $('tUpm').value = FILTRO;
   $('tFrBloque').style.display = tipo === 'area' ? '' : 'none'; $('tQueFila').style.display = tipo === 'area' ? 'none' : '';
   PANEL_SENT.t = null; $('tSent').style.display = 'none';
-  if (tipo === 'area') { frPoner('t', null); vistaSentinel('t', VERT.map(v => [v.lat, v.lng]), neta); }
+  if (tipo === 'area' && REJILLA) {         // figura ARF: no es frente ni pasa por las imágenes
+    frPoner('t', null); segPoner('tEsFr', 'no'); $('tTipo').value = ARF[0]; frRefrescar('t');
+    $('tResumen').innerHTML = `<b>Figura ARF:</b> ${celdasDe(VERT)} celdas · ${dec(m.area / 10000, 4)} ha · ${VERT.length} vértices` + (diagonales(VERT) ? '<br><span class="no">Tiene lados en diagonal.</span>' : '');
+  } else if (tipo === 'area') { frPoner('t', null); vistaSentinel('t', VERT.map(v => [v.lat, v.lng]), neta); }
   else { $('tAlerta').innerHTML = ''; const q = $('tQue'); q.innerHTML = ''; QUE.linea.forEach(t => { const o = document.createElement('option'); o.textContent = t; q.appendChild(o); }); }
   abrir('pTrazo');
 }
@@ -501,6 +542,7 @@ async function trazoConfirmar() {
   if (fr.falta) { avisar(fr.falta); return; }
   let codigo = PROX_T, extra = {};
   if (fr.frente) { const n = await numeroLibre($('tUpm').value); codigo = 'F' + n; extra.frente_n = n; }
+  if (tipo === 'area' && ARF.includes(fr.que)) extra.celdas = celdasDe(VERT);
   if (tipo === 'area' && VEG) extra = { ...extra, area_trazada_m2: Math.round(m.area), veg_m2: Math.round(m.area * VEG.frac), veg_url: VEG.url, veg_bounds: VEG.bounds, veg_manchas: VEG.manchas };
   const d = PANEL_SENT.t, al = fr.frente && d ? alertasFrente(fr, d.st, d.A, null, d.g21).map(avisoTxt) : [];
   const reg = { id: ahora.getTime().toString(36) + Math.random().toString(36).slice(2, 6), tipo, codigo, nombre: $('tCorto').value.trim(),
@@ -528,7 +570,7 @@ function abrirEditar(almacen, r, desdeMapa = false) {
   $('eFrBloque').style.display = area ? '' : 'none';
   $('eQueFila').style.display = almacen === 'trazos' && !area ? '' : 'none';
   PANEL_SENT.e = null; $('eSent').style.display = 'none'; $('eAlerta').innerHTML = '';
-  if (area) { frPoner('e', r); vistaSentinel('e', r.vertices, r.area_m2); }
+  if (area) { frPoner('e', r); if (!esARF(r)) vistaSentinel('e', r.vertices, r.area_m2); }
   else if (almacen === 'trazos') { const q = $('eQue'); q.innerHTML = ''; QUE.linea.forEach(t => { const o = document.createElement('option'); o.textContent = t; q.appendChild(o); }); if (r.que && !QUE.linea.includes(r.que)) { const o = document.createElement('option'); o.textContent = r.que; q.appendChild(o); } q.value = r.que || QUE.linea[0]; }
   $('eMedFila').style.display = almacen === 'trazos' ? '' : 'none';
   if (almacen === 'trazos') { const e = $('eMed'); e.innerHTML = ''; [...MEDICION, ...(r.medicion ? [] : ['— Sin dato —'])].forEach(t => { const o = document.createElement('option'); o.textContent = t; e.appendChild(o); }); e.value = r.medicion || '— Sin dato —'; }
@@ -541,6 +583,7 @@ async function guardarEdicion() {
   if (almacen === 'trazos') {
     if (r.tipo === 'area') {
       const f = frLeer('e'); if (f.falta) { avisar(f.falta); return; } Object.assign(nuevo, f);
+      if (ARF.includes(f.que)) nuevo.celdas = celdasDe(r.vertices); else delete nuevo.celdas;
       if (f.frente && (!esFrente(r) || r.upm !== nuevo.upm || !r.frente_n)) { const n = await numeroLibre(nuevo.upm, r.id); nuevo.frente_n = n; nuevo.codigo = 'F' + n; }   // pasa a frente o cambia de minero
       if (!f.frente && esFrente(r)) { const c = await siguiente('A'); nuevo.codigo = c; nuevo.frente_n = null; await gastar(c); }       // deja de ser frente: vuelve a la serie A
       const d = PANEL_SENT.e, al = f.frente && d ? alertasFrente(f, d.st, d.A, null, d.g21).map(avisoTxt) : [];
@@ -1211,11 +1254,31 @@ function alertasPanel(x) {
   const el = $(x + 'Alerta'), d = PANEL_SENT[x]; if (!el) return; if (!d) { el.innerHTML = ''; return; }
   const fr = frLeer(x); el.innerHTML = fr.falta || !fr.frente ? '' : contraste(fr, d.st, d.A, null, d.g21).filter(a => a.titulo !== '✓ Cuadra').map(avisoHtml).join('');   // el ✓ simple ya lo dice el recuadro de imágenes
 }
+const rendARF = L.svg({ padding: .5 });   // las figuras ARF van en SVG para rellenarlas con rayas
+function patronARF(col, denso) {             // rayas diagonales del color del minero; densas para explotación anticipada, abiertas para exploración
+  const svg = rendARF._container; if (!svg) return col;
+  const NS = 'http://www.w3.org/2000/svg', id = 'arf' + col.replace('#', '') + (denso ? 'd' : 'r');
+  let defs = svg.querySelector('defs'); if (!defs) { defs = document.createElementNS(NS, 'defs'); svg.insertBefore(defs, svg.firstChild); }
+  if (!defs.querySelector('#' + id)) {
+    const s = denso ? 8 : 14, p = document.createElementNS(NS, 'pattern'), l = document.createElementNS(NS, 'line');
+    p.setAttribute('id', id); p.setAttribute('patternUnits', 'userSpaceOnUse'); p.setAttribute('width', s); p.setAttribute('height', s); p.setAttribute('patternTransform', 'rotate(45)');
+    l.setAttribute('x1', 0); l.setAttribute('y1', 0); l.setAttribute('x2', 0); l.setAttribute('y2', s); l.setAttribute('stroke', col); l.setAttribute('stroke-width', denso ? 3 : 2);
+    p.appendChild(l); defs.appendChild(p);
+  }
+  return `url(#${id})`;
+}
 async function pintarTrazos() {              // en el color del minero asignado; sin minero, líneas celestes y áreas blancas
   const ts = (await trazosTodos()).filter(pasaFiltro); capaLineas.clearLayers(); capaAreas.clearLayers();
   ts.forEach(t => {
     const vs = t.vertices.map(([a, b]) => L.latLng(a, b));
-    if (t.tipo === 'area') {
+    if (esARF(t)) {
+      const col = colorDe(t.upm) || '#ffffff', expl = t.que === ARF[0];
+      L.polygon(vs, { color: '#000', weight: 5, opacity: .35, fill: false, interactive: false }).addTo(capaAreas);
+      L.polygon(vs, { renderer: rendARF, color: col, weight: 0, fillColor: col, fillOpacity: .12, interactive: false }).addTo(capaAreas);   // velo de color
+      const rz = L.polygon(vs, { renderer: rendARF, color: col, weight: 3, dashArray: expl ? null : '12 6', fillColor: col, fillOpacity: .9, interactive: false }).addTo(capaAreas);
+      rz.setStyle({ fillColor: patronARF(col, expl) });
+      etiqueta(centro(vs), `${rotulo(t)} · ARF ${t.celdas ?? celdasDe(vs)} celdas · ${dec(t.area_m2 / 10000, 4)} ha`, 'grande', () => fichaTrazo(t, centro(vs))).addTo(capaAreas);
+    } else if (t.tipo === 'area') {
       const col = colorDe(t.upm) || '#ffffff', hu = t.que === HUELLA || (esFrente(t) && t.estado === 'Inactivo');   // frentes inactivos (y huellas viejas) punteados
       L.polygon(vs, { color: '#000', weight: 5, opacity: .35, fill: false, interactive: false }).addTo(capaAreas);
       L.polygon(vs, { color: col, weight: 3, dashArray: hu ? '10 8' : null, fillColor: col, fillOpacity: hu ? .08 : .18, interactive: false }).addTo(capaAreas);
@@ -1242,13 +1305,13 @@ async function datosExport() {
   for (const u of [...new Set(ts.filter(esFrente).map(t => t.upm))]) { const eq = await equiposDe(u); AN[u] = { eq, R: analizar(await frentesDe(u), eq) }; }
   const fi = t => esFrente(t) && AN[t.upm] ? AN[t.upm].R.F.find(f => f.t.id === t.id) : null;
   const cabT = ['n', 'consecutivo', 'nombre', 'tipo', 'que_es', 'upm', 'nota', 'fecha_hora', 'longitud_o_perimetro_m', 'area_ha', 'area_m2', 'vertices', 'tramos_m', 'vertices_ctm12_este_norte', 'centro_ctm12_este', 'centro_ctm12_norte', 'como_se_midio',
-    'area_trazada_ha', 'arboles_quitados_ha', 'es_frente', 'estado_frente', 'parado_desde', 'google_2021_intervenido_pct', 'profundidad_m', 'sentinel_anterior_al_corte', 'intervenida_jul2023_al_menos_ha', 'intervenida_jul2023_pct', 'inicio_frente_a_mas_tardar', 'alertas', 'alertas_al_guardar', 'anterioridad_guardada', 'calculo_anterioridad'];
+    'area_trazada_ha', 'arboles_quitados_ha', 'es_frente', 'estado_frente', 'parado_desde', 'google_2021_intervenido_pct', 'profundidad_m', 'sentinel_anterior_al_corte', 'intervenida_jul2023_al_menos_ha', 'intervenida_jul2023_pct', 'inicio_frente_a_mas_tardar', 'alertas', 'alertas_al_guardar', 'anterioridad_guardada', 'calculo_anterioridad', 'celdas_arf'];
   const G21 = {}; for (const t of ts.filter(esFrente)) { try { G21[t.id] = await verde21(t.vertices); } catch (e) {} }
   const filasT = ts.map((t, i) => { const f = fi(t), g = G21[t.id]; return [i + 1, t.codigo || '', q(t.nombre), t.tipo === 'area' ? 'área' : 'línea', q(t.que), q(t.upm), q(t.nota), t.local, c(t.longitud_m),
     t.area_m2 != null ? c((t.area_m2 / 10000).toFixed(2)) : '', t.area_m2 ?? '', t.vertices.length, q(t.tramos_m.map(c).join(' | ')), q(t.ctm.map(([e, n]) => `${e} ${n}`).join(' | ')), t.tipo === 'area' ? centroCTM(t)[0] : '', t.tipo === 'area' ? centroCTM(t)[1] : '', q(t.medicion || ''),
     t.area_trazada_m2 ? c((t.area_trazada_m2 / 10000).toFixed(2)) : '', t.veg_m2 ? c((t.veg_m2 / 10000).toFixed(2)) : '',
     t.tipo === 'area' ? (esFrente(t) ? 'sí' : 'no') : '', q(t.estado || ''), t.parado_desde || '', g && !g.sin ? Math.round(g.pct * 100) : (esFrente(t) ? 'sin imagen' : ''), f ? c(f.h) : '', f ? EST_T[f.est] : '', f ? c((f.A23 / 10000).toFixed(2)) : '', f && f.A ? Math.round(f.A23 / f.A * 100) : '',
-    f && f.ini ? isoMes(f.ini) : '', q(f ? alertasFrente(t, f.st, f.A, AN[t.upm].eq.cCorte, G21[t.id]).map(avisoTxt).join(' | ') : ''), q((t.alertas_al_guardar || []).join(' | ')), t.ant ? q(t.ant.fecha) : '', q(t.calc ? t.calc.resumen.replace(/\n/g, ' ') : '')].join(';'); });
+    f && f.ini ? isoMes(f.ini) : '', q(f ? alertasFrente(t, f.st, f.A, AN[t.upm].eq.cCorte, G21[t.id]).map(avisoTxt).join(' | ') : ''), q((t.alertas_al_guardar || []).join(' | ')), t.ant ? q(t.ant.fecha) : '', q(t.calc ? t.calc.resumen.replace(/\n/g, ' ') : ''), esARF(t) ? (t.celdas ?? celdasDe(t.vertices)) : ''].join(';'); });
   const csvT = '﻿' + cabT.join(';') + '\n' + filasT.join('\n') + '\n';
   const cabM = ['minero', 'frentes', 'activos', 'inactivos', 'area_frentes_ha', 'intervenida_jul2023_al_menos_ha', 'intervenida_jul2023_pct', 'frentes_con_anterioridad', 'inicio_calculado', 'inicio_manifestado',
     'produccion_hoy_m3_ano', 'material_que_dice_remover_m3_ano', 'produccion_observada_desde_corte_m3_ano', 'supera_165000_segun_lo_observado', 'historia_equipos', 'motobombas_hoy', 'pulgadas_hoy', 'agua_por_grava',
@@ -1279,7 +1342,7 @@ async function datosExport() {
         es_frente: t.tipo === 'area' ? esFrente(t) : null, estado_frente: t.estado || null, parado_desde: t.parado_desde || null,
         google_2021_intervenido_pct: G21[t.id] && !G21[t.id].sin ? Math.round(G21[t.id].pct * 100) : null, alertas_al_guardar: t.alertas_al_guardar || null,
         ...(fi(t) ? { profundidad_m: fi(t).h, sentinel_anterior_al_corte: EST_T[fi(t).est], intervenida_jul2023_al_menos_ha: +(fi(t).A23 / 10000).toFixed(2), inicio_frente_a_mas_tardar: fi(t).ini ? isoMes(fi(t).ini) : null } : {}),
-        calculo_anterioridad: t.calc ? t.calc.resumen : null } }))] }, null, 1);
+        calculo_anterioridad: t.calc ? t.calc.resumen : null, celdas_arf: esARF(t) ? (t.celdas ?? celdasDe(t.vertices)) : null } }))] }, null, 1);
   const d = new Date(), z = n => String(n).padStart(2, '0');
   const base = `ZRP753_campo_${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}_${z(d.getHours())}${z(d.getMinutes())}`;
   return { pts, ts, csv, csvT, csvM, kml, gj, base };
@@ -1349,7 +1412,8 @@ $('bMedCruz').onclick = () => medirAgregar(map.getCenter());
 $('bMedYo').onclick = () => { if (POS) medirAgregar([POS.lat, POS.lon]); else avisar('Sin GPS todavía'); };
 $('bMedDeshacer').onclick = () => { VERT.pop(); VEG = null; pintarMed(); };
 $('bMedFin').onclick = () => medirFin(true);
-$('bMedArea').onclick = () => { CERRADA = !CERRADA; VEG = null; marcarArea(); pintarMed(); };
+$('bMedArea').onclick = () => { if (REJILLA) { avisar('La figura ARF siempre es un área'); return; } CERRADA = !CERRADA; VEG = null; marcarArea(); pintarMed(); };
+$('bMedRejilla').onclick = alternarRejilla;
 $('bMedGuardar').onclick = medirGuardar;
 $('bTCancelar').onclick = () => abrir(null); $('bTGuardar').onclick = trazoConfirmar;
 $('bMedir').onclick = medirAbrir;

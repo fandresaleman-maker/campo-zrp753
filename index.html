@@ -102,6 +102,7 @@
   #pCalc input:disabled, #pCalc select:disabled { background:#e9edf4; color:#1d1d1f; -webkit-text-fill-color:#1d1d1f; opacity:1; }
   .lmin { margin-top:6px; padding-top:6px; border-top:1px solid #e3e7ef; font-size:14px; color:#222; }
   .sub { padding-left:14px; } .caja .sub + b, .caja .sub + br { margin-top:2px; }
+  #pMedir .fila button.on { background:var(--gold); color:var(--navy); border-color:var(--gold); }
   .hist .h-dia { font-size:14px; color:#5b6475; text-align:right; padding-right:4px; }
   .grid3 { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:2px 8px; }
   .panel .grid3 label { margin:6px 0 0; font-size:12px; line-height:1.25; display:flex; flex-direction:column; justify-content:space-between; }
@@ -158,6 +159,7 @@
 <div id="pMedir"><div id="medTxt">Toca el mapa o usa los botones para poner puntos de medición.</div>
   <div class="fila"><button id="bMedCruz" class="prim">＋ En la cruz</button><button id="bMedYo">＋ Mi posición</button><button id="bMedDeshacer">Deshacer</button></div>
   <div class="fila"><button id="bMedArea">Cerrar área</button><button id="bMedGuardar" class="prim">Guardar</button><button id="bMedFin">Salir</button></div>
+  <div class="fila"><button id="bMedRejilla">Ajustar a la cuadrícula</button></div>
   <div class="fila" id="filaVeg" style="display:none"><button id="bMedVeg">🌳 Quitar árboles del área</button></div></div>
 <div id="pVeg"><div id="vegTxt"></div><div class="fila"><button id="bVegNo">Descartar</button><button id="bVegSi" class="prim">Aceptar</button></div></div>
 <div id="filtros"><select id="fMinero" aria-label="Filtrar por minero"></select><button data-v="puntos" class="on">Puntos</button><button data-v="lineas" class="on">Líneas</button><button data-v="areas" class="on">Áreas</button></div>
